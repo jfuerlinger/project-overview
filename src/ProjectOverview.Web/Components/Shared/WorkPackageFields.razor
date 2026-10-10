@@ -3,6 +3,16 @@
     <InputText id="@($"{IdPrefix}-title")" class="form-control" @bind-Value="Form.Title" />
 </div>
 <div class="mb-2">
+    <label class="form-label" for="@($"{IdPrefix}-parent")">Übergeordnetes Arbeitspaket</label>
+    <InputSelect id="@($"{IdPrefix}-parent")" class="form-select" @bind-Value="Form.ParentId">
+        <option value="">(keines, oberste Ebene)</option>
+        @foreach (var option in ParentOptions)
+        {
+            <option value="@option.Id">@option.Label</option>
+        }
+    </InputSelect>
+</div>
+<div class="mb-2">
     <label class="form-label" for="@($"{IdPrefix}-description")">Beschreibung</label>
     <InputTextArea id="@($"{IdPrefix}-description")" class="form-control" @bind-Value="Form.Description" />
 </div>
@@ -13,15 +23,21 @@
     </div>
     <div class="col">
         <label class="form-label" for="@($"{IdPrefix}-start")">Startdatum</label>
-        <InputDate id="@($"{IdPrefix}-start")" class="form-control" @bind-Value="Form.StartDate" />
+        <InputDate id="@($"{IdPrefix}-start")" class="form-control" @bind-Value="Form.StartDate" disabled="@Form.IsDerived" />
     </div>
     <div class="col">
         <label class="form-label" for="@($"{IdPrefix}-end")">Enddatum</label>
-        <InputDate id="@($"{IdPrefix}-end")" class="form-control" @bind-Value="Form.EndDate" />
+        <InputDate id="@($"{IdPrefix}-end")" class="form-control" @bind-Value="Form.EndDate" disabled="@Form.IsDerived" />
     </div>
 </div>
 
+@if (Form.IsDerived)
+{
+    <p class="text-muted small">Start und Ende werden aus den Unterarbeitspaketen abgeleitet.</p>
+}
+
 @code {
     [Parameter, EditorRequired] public WorkPackageForm Form { get; set; } = default!;
+    [Parameter] public IReadOnlyList<(Guid Id, string Label)> ParentOptions { get; set; } = [];
     [Parameter, EditorRequired] public string IdPrefix { get; set; } = "";
 }

@@ -36,6 +36,9 @@ public sealed class ProjectOverviewDbContext(DbContextOptions<ProjectOverviewDbC
             // A work package belongs to exactly one project and goes away with it.
             package.HasOne<Project>().WithMany().HasForeignKey(p => p.ProjectId).OnDelete(DeleteBehavior.Cascade);
             package.HasIndex(p => new { p.ProjectId, p.CreatedAt });
+            // Sub work packages go away with their parent.
+            package.HasOne<WorkPackage>().WithMany().HasForeignKey(p => p.ParentId).OnDelete(DeleteBehavior.Cascade);
+            package.HasIndex(p => p.ParentId);
         });
     }
 }

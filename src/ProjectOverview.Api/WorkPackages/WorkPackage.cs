@@ -13,6 +13,9 @@ public sealed class WorkPackage
 {
     public Guid Id { get; private set; }
     public Guid ProjectId { get; private set; }
+
+    /// <summary>The parent work package within the same project, or null for a top-level package.</summary>
+    public Guid? ParentId { get; private set; }
     public string Title { get; private set; } = "";
     public string? Description { get; private set; }
     public int? DurationDays { get; private set; }
@@ -24,10 +27,12 @@ public sealed class WorkPackage
     private WorkPackage() { }
 
     public static WorkPackage Create(
-        Guid projectId, string title, string? description, int? durationDays, DateOnly? startDate, DateOnly? endDate) => new()
+        Guid projectId, Guid? parentId, string title, string? description, int? durationDays,
+        DateOnly? startDate, DateOnly? endDate) => new()
     {
         Id = Guid.NewGuid(),
         ProjectId = projectId,
+        ParentId = parentId,
         Title = title,
         Description = description,
         DurationDays = durationDays,
@@ -47,4 +52,6 @@ public sealed class WorkPackage
     }
 
     public void SetStatus(WorkPackageStatus status) => Status = status;
+
+    public void MoveTo(Guid? parentId) => ParentId = parentId;
 }

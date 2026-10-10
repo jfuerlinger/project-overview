@@ -7,12 +7,13 @@ internal static class WorkPackageCommands
 {
     /// <summary>The CLI's JSON contract for a work package.</summary>
     private sealed record WorkPackageOutput(
-        Guid Id, Guid ProjectId, string Title, string? Description, int? DurationDays,
-        DateOnly? StartDate, DateOnly? EndDate, string Status)
+        Guid Id, Guid ProjectId, Guid? ParentId, string Title, string? Description, int? DurationDays,
+        DateOnly? StartDate, DateOnly? EndDate, string Status, bool IsDerived)
     {
         public static WorkPackageOutput From(WorkPackageResponse package) => new(
-            package.Id, package.ProjectId, package.Title, package.Description, package.DurationDays,
-            package.StartDate, package.EndDate, CliContext.StatusName(package.Status));
+            package.Id, package.ProjectId, package.ParentId, package.Title, package.Description,
+            package.DurationDays, package.StartDate, package.EndDate, CliContext.StatusName(package.Status),
+            package.IsDerived);
     }
 
     public static Command Build(CliContext context)
@@ -23,6 +24,7 @@ internal static class WorkPackageCommands
         packages.Subcommands.Add(Get(context));
         packages.Subcommands.Add(Update(context));
         packages.Subcommands.Add(SetStatus(context));
+        packages.Subcommands.Add(SetParent(context));
         packages.Subcommands.Add(Delete(context));
         return packages;
     }
@@ -38,11 +40,36 @@ internal static class WorkPackageCommands
 
         context.WriteTable(
             ["ID", "TITLE", "STATUS", "DAYS", "START", "END"],
-            packages.Select(p => new[]
+            InHierarchyOrder(packages).Select(entry => new[]
             {
-                p.Id.ToString(), p.Title, p.Status, p.DurationDays?.ToString() ?? "-",
-                CliContext.DateText(p.StartDate), CliContext.DateText(p.EndDate),
+                entry.Package.Id.ToString(), new string(' ', entry.Depth * 2) + entry.Package.Title,
+                entry.Package.Status, entry.Package.DurationDays?.ToString() ?? "-",
+                CliContext.DateText(entry.Package.StartDate), CliContext.DateText(entry.Package.EndDate),
             }));
+    }
+
+    /// <summary>Depth-first order (parents before their children, siblings in the order given) with each depth.</summary>
+    private static IEnumerable<(WorkPackageOutput Package, int Depth)> InHierarchyOrder(WorkPackageOutput[] packages)
+    {
+        var ids = packages.Select(p => p.Id).ToHashSet();
+        var childrenOf = packages
+            .Where(p => p.ParentId is { } parent && ids.Contains(parent))
+            .ToLookup(p => p.ParentId!.Value);
+        var visited = new HashSet<Guid>();
+
+        IEnumerable<(WorkPackageOutput, int)> Walk(WorkPackageOutput package, int depth)
+        {
+            if (!visited.Add(package.Id)) yield break;
+            yield return (package, depth);
+            foreach (var child in childrenOf[package.Id])
+                foreach (var entry in Walk(child, depth + 1))
+                    yield return entry;
+        }
+
+        // Roots are packages without a parent in this list (a get of a single package has none).
+        foreach (var root in packages.Where(p => p.ParentId is not { } parent || !ids.Contains(parent)))
+            foreach (var entry in Walk(root, 0))
+                yield return entry;
     }
 
     private static Option<int?> DurationOption(string name, string description) => new(name) { Description = description };
@@ -69,10 +96,11 @@ internal static class WorkPackageCommands
         var duration = DurationOption("--duration-days", "Planned duration in days.");
         var startDate = CliContext.DateOption("--start-date", "Start date (yyyy-MM-dd).");
         var endDate = CliContext.DateOption("--end-date", "End date (yyyy-MM-dd).");
+        var parent = new Option<Guid?>("--parent") { Description = "Parent work package (same project) to create a sub work package." };
 
-        var command = new Command("create", "Create a work package in a project.")
+        var command = new Command("create", "Create a work package (or a sub work package with --parent) in a project.")
         {
-            project, title, description, duration, startDate, endDate,
+            project, title, description, duration, startDate, endDate, parent,
         };
         context.Cover("createWorkPackage");
         command.SetAction((parseResult, ct) => context.Execute(parseResult, async client =>
@@ -84,6 +112,7 @@ internal static class WorkPackageCommands
                 DurationDays = parseResult.GetValue(duration),
                 StartDate = parseResult.GetValue(startDate),
                 EndDate = parseResult.GetValue(endDate),
+                ParentId = parseResult.GetValue(parent),
             }, ct);
             Print(context, parseResult, [WorkPackageOutput.From(created)], asList: false);
         }));
@@ -148,8 +177,11 @@ internal static class WorkPackageCommands
                 Title = Given(title) ? parseResult.GetValue(title) : current.Title,
                 Description = Given(description) ? parseResult.GetValue(description) : current.Description,
                 DurationDays = Given(clearDuration) ? null : Given(duration) ? parseResult.GetValue(duration) : current.DurationDays,
-                StartDate = Given(clearStartDate) ? null : Given(startDate) ? parseResult.GetValue(startDate) : current.StartDate,
-                EndDate = Given(clearEndDate) ? null : Given(endDate) ? parseResult.GetValue(endDate) : current.EndDate,
+                // The dates of a package with sub work packages are derived; sending them back would be rejected.
+                StartDate = Given(clearStartDate) ? null : Given(startDate) ? parseResult.GetValue(startDate)
+                    : current.IsDerived ? null : current.StartDate,
+                EndDate = Given(clearEndDate) ? null : Given(endDate) ? parseResult.GetValue(endDate)
+                    : current.IsDerived ? null : current.EndDate,
             }, ct);
             Print(context, parseResult, [WorkPackageOutput.From(updated)], asList: false);
         }));
@@ -175,12 +207,37 @@ internal static class WorkPackageCommands
         return command;
     }
 
+    private static Command SetParent(CliContext context)
+    {
+        var id = new Argument<Guid>("id") { Description = "Work package id." };
+        var parent = new Option<Guid?>("--parent") { Description = "Make it a sub work package of this package (same project)." };
+        var root = new Option<bool>("--root") { Description = "Make it a top-level work package." };
+
+        var command = new Command("set-parent", "Move a work package under another one or to the top level.") { id, parent, root };
+        command.Validators.Add(result =>
+        {
+            var hasParent = result.GetResult(parent) is { Implicit: false };
+            var hasRoot = result.GetResult(root) is { Implicit: false };
+            if (hasParent == hasRoot) result.AddError("Pass exactly one of --parent <id> and --root.");
+        });
+        context.Cover("setWorkPackageParent");
+        command.SetAction((parseResult, ct) => context.Execute(parseResult, async client =>
+        {
+            var updated = await client.SetWorkPackageParentAsync(parseResult.GetValue(id), new SetWorkPackageParentRequest
+            {
+                ParentId = parseResult.GetValue(root) ? null : parseResult.GetValue(parent),
+            }, ct);
+            Print(context, parseResult, [WorkPackageOutput.From(updated)], asList: false);
+        }));
+        return command;
+    }
+
     private static Command Delete(CliContext context)
     {
         var id = new Argument<Guid>("id") { Description = "Work package id." };
         var yes = new Option<bool>("--yes", "-y") { Description = "Delete without asking for confirmation." };
 
-        var command = new Command("delete", "Delete a work package.") { id, yes };
+        var command = new Command("delete", "Delete a work package and its sub work packages.") { id, yes };
         context.Cover("deleteWorkPackage");
         command.SetAction((parseResult, ct) => context.Execute(parseResult, async client =>
         {
@@ -189,7 +246,7 @@ internal static class WorkPackageCommands
             if (!parseResult.GetValue(yes))
             {
                 var package = await client.GetWorkPackageAsync(packageId, ct);
-                if (!context.Confirm($"Delete work package '{package.Title}' ({package.Id})? [y/N] "))
+                if (!context.Confirm($"Delete work package '{package.Title}' ({package.Id}) and its sub work packages? [y/N] "))
                     throw new CliFailure(1, "confirmation_required", "Deletion not confirmed. Pass --yes to delete without asking.");
             }
 

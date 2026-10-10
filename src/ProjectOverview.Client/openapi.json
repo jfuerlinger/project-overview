@@ -438,6 +438,7 @@
         "tags": [
           "Work packages"
         ],
+        "description": "Not allowed for a package with sub work packages: its status is derived.",
         "operationId": "setWorkPackageStatus",
         "parameters": [
           {
@@ -455,6 +456,60 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SetWorkPackageStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkPackageResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/work-packages/{id}/parent": {
+      "put": {
+        "tags": [
+          "Work packages"
+        ],
+        "operationId": "setWorkPackageParent",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetWorkPackageParentRequest"
               }
             }
           },
@@ -525,7 +580,8 @@
           "description",
           "durationDays",
           "startDate",
-          "endDate"
+          "endDate",
+          "parentId"
         ],
         "type": "object",
         "properties": {
@@ -550,6 +606,11 @@
           "endDate": {
             "type": "string",
             "format": "date",
+            "nullable": true
+          },
+          "parentId": {
+            "type": "string",
+            "format": "uuid",
             "nullable": true
           }
         }
@@ -654,6 +715,19 @@
           }
         }
       },
+      "SetWorkPackageParentRequest": {
+        "required": [
+          "parentId"
+        ],
+        "type": "object",
+        "properties": {
+          "parentId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          }
+        }
+      },
       "SetWorkPackageStatusRequest": {
         "required": [
           "status"
@@ -743,12 +817,14 @@
         "required": [
           "id",
           "projectId",
+          "parentId",
           "title",
           "description",
           "durationDays",
           "startDate",
           "endDate",
-          "status"
+          "status",
+          "isDerived"
         ],
         "type": "object",
         "properties": {
@@ -759,6 +835,11 @@
           "projectId": {
             "type": "string",
             "format": "uuid"
+          },
+          "parentId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
           },
           "title": {
             "type": "string"
@@ -784,6 +865,9 @@
           },
           "status": {
             "$ref": "#/components/schemas/WorkPackageStatus"
+          },
+          "isDerived": {
+            "type": "boolean"
           }
         }
       },

@@ -71,6 +71,9 @@ namespace ProjectOverview.Api.Migrations
                     b.Property<DateOnly?>("EndDate")
                         .HasColumnType("TEXT");
 
+                    b.Property<Guid?>("ParentId")
+                        .HasColumnType("TEXT");
+
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("TEXT");
 
@@ -88,6 +91,8 @@ namespace ProjectOverview.Api.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ParentId");
+
                     b.HasIndex("ProjectId", "CreatedAt");
 
                     b.ToTable("WorkPackages");
@@ -95,6 +100,11 @@ namespace ProjectOverview.Api.Migrations
 
             modelBuilder.Entity("ProjectOverview.Api.WorkPackages.WorkPackage", b =>
                 {
+                    b.HasOne("ProjectOverview.Api.WorkPackages.WorkPackage", null)
+                        .WithMany()
+                        .HasForeignKey("ParentId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
                     b.HasOne("ProjectOverview.Api.Projects.Project", null)
                         .WithMany()
                         .HasForeignKey("ProjectId")

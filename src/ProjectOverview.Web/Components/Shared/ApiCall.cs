@@ -31,6 +31,10 @@ public static class ApiCall
         {
             return ["Die API ist nicht erreichbar."];
         }
+        catch (TaskCanceledException)
+        {
+            return ["Die API hat nicht rechtzeitig geantwortet."];
+        }
     }
 
     public static string StatusLabel(string status) => status switch

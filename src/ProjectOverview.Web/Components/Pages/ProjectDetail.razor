@@ -31,7 +31,7 @@
     <section class="mb-4">
         <h2 class="h4">Arbeitspaket anlegen</h2>
         <EditForm Model="_createForm" OnSubmit="Create" FormName="create-work-package">
-            <WorkPackageFields Form="_createForm" IdPrefix="create" />
+            <WorkPackageFields Form="_createForm" IdPrefix="create" ParentOptions="ParentChoices(excluding: null)" />
             <ErrorList Errors="_createErrors" />
             <button type="submit" class="btn btn-primary" disabled="@_saving">Anlegen</button>
         </EditForm>
@@ -61,14 +61,14 @@
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var package in _packages)
+                    @foreach (var (package, depth) in Ordered())
                     {
                         @if (_editingId == package.Id)
                         {
                             <tr>
                                 <td colspan="6">
                                     <EditForm Model="_editForm" OnSubmit="() => SaveEdit(package.Id)" FormName="@($"edit-{package.Id}")">
-                                        <WorkPackageFields Form="_editForm" IdPrefix="@($"edit-{package.Id}")" />
+                                        <WorkPackageFields Form="_editForm" IdPrefix="@($"edit-{package.Id}")" ParentOptions="ParentChoices(excluding: package.Id)" />
                                         <ErrorList Errors="_editErrors" />
                                         <button type="submit" class="btn btn-primary btn-sm" disabled="@_saving">Speichern</button>
                                         <button type="button" class="btn btn-secondary btn-sm" @onclick="() => _editingId = null">Abbrechen</button>
@@ -79,8 +79,12 @@
                         else
                         {
                             <tr>
-                                <td>
+                                <td style="padding-left: @(depth * 1.5 + 0.5)rem">
                                     @package.Title
+                                    @if (package.IsDerived)
+                                    {
+                                        <span class="badge text-bg-light ms-1" title="Status und Termine werden aus den Unterarbeitspaketen abgeleitet">abgeleitet</span>
+                                    }
                                     @if (!string.IsNullOrWhiteSpace(package.Description))
                                     {
                                         <div class="text-muted small">@package.Description</div>
@@ -88,7 +92,7 @@
                                 </td>
                                 <td>
                                     <select @key="@($"{package.Id}-{_statusRefresh}")" class="form-select form-select-sm"
-                                            aria-label="Status von @package.Title" disabled="@_saving"
+                                            aria-label="Status von @package.Title" disabled="@(_saving || package.IsDerived)"
                                             value="@package.Status" @onchange="e => SetStatus(package.Id, e.Value?.ToString())">
                                         @foreach (var status in Enum.GetValues<WorkPackageStatus>())
                                         {
@@ -102,7 +106,7 @@
                                 <td class="text-end text-nowrap">
                                     @if (_deleteConfirmId == package.Id)
                                     {
-                                        <span class="me-2">Wirklich löschen?</span>
+                                        <span class="me-2">@(package.IsDerived ? "Wirklich löschen? Die Unterarbeitspakete werden mitgelöscht." : "Wirklich löschen?")</span>
                                         <button type="button" class="btn btn-danger btn-sm" @onclick="() => Delete(package.Id)">Ja, löschen</button>
                                         <button type="button" class="btn btn-secondary btn-sm" @onclick="() => _deleteConfirmId = null">Abbrechen</button>
                                     }
@@ -136,6 +140,7 @@
     private Guid? _deleteConfirmId;
     private bool _saving;
     private int _statusRefresh;
+    private Guid? _editOriginalParentId;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -147,6 +152,7 @@
         _actionError = null;
         _createErrors = [];
         _editErrors = [];
+        _createForm.Reset();
         await Load(loadProject: true);
     }
 
@@ -161,6 +167,7 @@
         catch (ApiException exception) when (exception.StatusCode == 404)
         {
             _project = null;
+            _packages = null;
             _loadError = "Das Projekt wurde nicht gefunden.";
         }
         catch (HttpRequestException)
@@ -195,6 +202,7 @@
         _createErrors = await Call(() => Api.CreateWorkPackageAsync(ProjectId, new CreateWorkPackageRequest
         {
             Title = _createForm.Title,
+            ParentId = _createForm.ParentId,
             Description = _createForm.Description,
             DurationDays = _createForm.DurationDays,
             StartDate = _createForm.StartDate,
@@ -214,6 +222,9 @@
         _editErrors = [];
         _actionError = null;
         _editForm.Title = package.Title;
+        _editForm.ParentId = package.ParentId;
+        _editOriginalParentId = package.ParentId;
+        _editForm.IsDerived = package.IsDerived;
         _editForm.Description = package.Description;
         _editForm.DurationDays = package.DurationDays;
         _editForm.StartDate = package.StartDate;
@@ -230,18 +241,69 @@
     {
         if (_saving) return;
         _actionError = null;
-        _editErrors = await Call(() => Api.UpdateWorkPackageAsync(id, new UpdateWorkPackageRequest
+        _editErrors = await Call(async () =>
         {
-            Title = _editForm.Title,
-            Description = _editForm.Description,
-            DurationDays = _editForm.DurationDays,
-            StartDate = _editForm.StartDate,
-            EndDate = _editForm.EndDate,
-        }));
+            // Move first: if the move is rejected nothing else has been changed.
+            if (_editForm.ParentId != _editOriginalParentId)
+                await Api.SetWorkPackageParentAsync(id, new SetWorkPackageParentRequest { ParentId = _editForm.ParentId });
+
+            await Api.UpdateWorkPackageAsync(id, new UpdateWorkPackageRequest
+            {
+                Title = _editForm.Title,
+                Description = _editForm.Description,
+                DurationDays = _editForm.DurationDays,
+                // A package with sub work packages gets its dates from them and must not send its own.
+                StartDate = _editForm.IsDerived ? null : _editForm.StartDate,
+                EndDate = _editForm.IsDerived ? null : _editForm.EndDate,
+            });
+        });
 
         if (_editErrors.Count > 0) return;
         _editingId = null;
         await Load();
+    }
+
+    /// <summary>The packages in tree order (parents before their children) with their depth.</summary>
+    private List<(WorkPackageResponse Package, int Depth)> Ordered()
+    {
+        var result = new List<(WorkPackageResponse, int)>();
+        if (_packages is null) return result;
+
+        var ids = _packages.Select(p => p.Id).ToHashSet();
+        var childrenOf = _packages.Where(p => p.ParentId is { } parent && ids.Contains(parent)).ToLookup(p => p.ParentId!.Value);
+        var visited = new HashSet<Guid>();
+
+        void Walk(WorkPackageResponse package, int depth)
+        {
+            if (!visited.Add(package.Id)) return;
+            result.Add((package, depth));
+            foreach (var child in childrenOf[package.Id]) Walk(child, depth + 1);
+        }
+
+        foreach (var root in _packages.Where(p => p.ParentId is not { } parent || !ids.Contains(parent))) Walk(root, 0);
+        return result;
+    }
+
+    /// <summary>Packages that may become the parent; a package and its descendants are excluded to avoid cycles.</summary>
+    private IReadOnlyList<(Guid Id, string Label)> ParentChoices(Guid? excluding)
+    {
+        var excluded = new HashSet<Guid>();
+        if (excluding is { } id && _packages is not null)
+        {
+            excluded.Add(id);
+            var grew = true;
+            while (grew)
+            {
+                grew = false;
+                foreach (var package in _packages)
+                    if (package.ParentId is { } parent && excluded.Contains(parent) && excluded.Add(package.Id)) grew = true;
+            }
+        }
+
+        return Ordered()
+            .Where(entry => !excluded.Contains(entry.Package.Id))
+            .Select(entry => (entry.Package.Id, new string('–', entry.Depth) + (entry.Depth > 0 ? " " : "") + entry.Package.Title))
+            .ToList();
     }
 
     private async Task SetStatus(Guid id, string? value)

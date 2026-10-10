@@ -13,27 +13,39 @@ public static class WorkPackageLimits
 }
 
 public sealed record CreateWorkPackageRequest(
-    string? Title, string? Description, int? DurationDays, DateOnly? StartDate, DateOnly? EndDate);
+    string? Title, string? Description, int? DurationDays, DateOnly? StartDate, DateOnly? EndDate, Guid? ParentId);
 
-/// <summary>Replaces all fields; omitted optional values are cleared. The status and the project are unchanged.</summary>
+/// <summary>
+/// Replaces all fields; omitted optional values are cleared. Status, project and parent are unchanged.
+/// A package with sub work packages must not carry its own dates (they are derived).
+/// </summary>
 public sealed record UpdateWorkPackageRequest(
     string? Title, string? Description, int? DurationDays, DateOnly? StartDate, DateOnly? EndDate);
 
 public sealed record SetWorkPackageStatusRequest(WorkPackageStatus? Status);
 
+/// <summary>Moves a package under another package of the same project; a null parent makes it a top-level package.</summary>
+public sealed record SetWorkPackageParentRequest(Guid? ParentId);
+
+/// <summary>
+/// <c>status</c>, <c>startDate</c> and <c>endDate</c> are the effective values; when
+/// <c>isDerived</c> is true they come from the sub work packages and cannot be set manually.
+/// </summary>
 public sealed record WorkPackageResponse(
     Guid Id,
     Guid ProjectId,
+    Guid? ParentId,
     string Title,
     string? Description,
     int? DurationDays,
     DateOnly? StartDate,
     DateOnly? EndDate,
-    WorkPackageStatus Status)
+    WorkPackageStatus Status,
+    bool IsDerived)
 {
-    public static WorkPackageResponse From(WorkPackage package) => new(
-        package.Id, package.ProjectId, package.Title, package.Description,
-        package.DurationDays, package.StartDate, package.EndDate, package.Status);
+    public static WorkPackageResponse From(WorkPackage package, EffectiveWorkPackage effective) => new(
+        package.Id, package.ProjectId, package.ParentId, package.Title, package.Description,
+        package.DurationDays, effective.StartDate, effective.EndDate, effective.Status, effective.IsDerived);
 }
 
 public static class WorkPackageEndpoints
@@ -49,7 +61,9 @@ public static class WorkPackageEndpoints
         group.MapGet("/{id:guid}", GetWorkPackage).WithName("getWorkPackage");
         group.MapPut("/{id:guid}", UpdateWorkPackage).WithName("updateWorkPackage")
             .WithDescription("Replaces title, description, duration and dates. Optional values that are omitted are cleared. Status and project are unchanged.");
-        group.MapPut("/{id:guid}/status", SetWorkPackageStatus).WithName("setWorkPackageStatus");
+        group.MapPut("/{id:guid}/status", SetWorkPackageStatus).WithName("setWorkPackageStatus")
+            .WithDescription("Not allowed for a package with sub work packages: its status is derived.");
+        group.MapPut("/{id:guid}/parent", SetWorkPackageParent).WithName("setWorkPackageParent");
         group.MapDelete("/{id:guid}", DeleteWorkPackage).WithName("deleteWorkPackage");
 
         return routes;
@@ -60,11 +74,9 @@ public static class WorkPackageEndpoints
     {
         if (!await db.Projects.AnyAsync(p => p.Id == projectId, ct)) return TypedResults.NotFound();
 
-        var packages = await db.WorkPackages.AsNoTracking()
-            .Where(p => p.ProjectId == projectId)
-            .OrderBy(p => p.CreatedAt).ThenBy(p => p.Id)
-            .ToListAsync(ct);
-        return TypedResults.Ok(packages.Select(WorkPackageResponse.From).ToArray());
+        var packages = await LoadProjectPackages(db, projectId, ct);
+        var effective = WorkPackageHierarchy.Resolve(packages);
+        return TypedResults.Ok(packages.Select(p => WorkPackageResponse.From(p, effective[p.Id])).ToArray());
     }
 
     private static async Task<Results<Created<WorkPackageResponse>, NotFound, ValidationProblem>> CreateWorkPackage(
@@ -73,22 +85,29 @@ public static class WorkPackageEndpoints
         if (!await db.Projects.AnyAsync(p => p.Id == projectId, ct)) return TypedResults.NotFound();
 
         var errors = Validate(request.Title, request.Description, request.DurationDays, request.StartDate, request.EndDate);
+        if (request.ParentId is { } parentId)
+        {
+            var parent = await db.WorkPackages.AsNoTracking().SingleOrDefaultAsync(p => p.Id == parentId, ct);
+            if (parent is null) errors.Add("parentId", "not_found", "Parent work package does not exist.");
+            else if (parent.ProjectId != projectId)
+                errors.Add("parentId", "other_project", "Parent work package belongs to another project.");
+        }
         if (errors.Any) return errors.ToProblem();
 
         var package = WorkPackage.Create(
-            projectId, request.Title!.Trim(), NormalizeDescription(request.Description),
+            projectId, request.ParentId, request.Title!.Trim(), NormalizeDescription(request.Description),
             request.DurationDays, request.StartDate, request.EndDate);
         db.WorkPackages.Add(package);
         await db.SaveChangesAsync(ct);
 
-        return TypedResults.Created($"/work-packages/{package.Id}", WorkPackageResponse.From(package));
+        return TypedResults.Created($"/work-packages/{package.Id}", await ToResponse(db, package, ct));
     }
 
     private static async Task<Results<Ok<WorkPackageResponse>, NotFound>> GetWorkPackage(
         Guid id, ProjectOverviewDbContext db, CancellationToken ct)
     {
         var package = await db.WorkPackages.AsNoTracking().SingleOrDefaultAsync(p => p.Id == id, ct);
-        return package is null ? TypedResults.NotFound() : TypedResults.Ok(WorkPackageResponse.From(package));
+        return package is null ? TypedResults.NotFound() : TypedResults.Ok(await ToResponse(db, package, ct));
     }
 
     private static async Task<Results<Ok<WorkPackageResponse>, NotFound, ValidationProblem>> UpdateWorkPackage(
@@ -98,6 +117,13 @@ public static class WorkPackageEndpoints
         if (package is null) return TypedResults.NotFound();
 
         var errors = Validate(request.Title, request.Description, request.DurationDays, request.StartDate, request.EndDate);
+        if (await HasChildren(db, id, ct))
+        {
+            if (request.StartDate is not null)
+                errors.Add("startDate", "derived", "Start date is derived from the sub work packages and cannot be set.");
+            if (request.EndDate is not null)
+                errors.Add("endDate", "derived", "End date is derived from the sub work packages and cannot be set.");
+        }
         if (errors.Any) return errors.ToProblem();
 
         package.Update(
@@ -105,7 +131,7 @@ public static class WorkPackageEndpoints
             request.DurationDays, request.StartDate, request.EndDate);
         await db.SaveChangesAsync(ct);
 
-        return TypedResults.Ok(WorkPackageResponse.From(package));
+        return TypedResults.Ok(await ToResponse(db, package, ct));
     }
 
     private static async Task<Results<Ok<WorkPackageResponse>, NotFound, ValidationProblem>> SetWorkPackageStatus(
@@ -120,10 +146,48 @@ public static class WorkPackageEndpoints
                 .Add("status", "required", $"Status is required (one of: {string.Join(", ", EnumNames.CamelCase<WorkPackageStatus>())}).")
                 .ToProblem();
 
+        if (await HasChildren(db, id, ct))
+            return new ValidationErrors()
+                .Add("status", "derived", "Status is derived from the sub work packages and cannot be set.")
+                .ToProblem();
+
         package.SetStatus(status);
         await db.SaveChangesAsync(ct);
 
-        return TypedResults.Ok(WorkPackageResponse.From(package));
+        return TypedResults.Ok(await ToResponse(db, package, ct));
+    }
+
+    private static async Task<Results<Ok<WorkPackageResponse>, NotFound, ValidationProblem>> SetWorkPackageParent(
+        Guid id, SetWorkPackageParentRequest request, ProjectOverviewDbContext db, CancellationToken ct)
+    {
+        var package = await db.WorkPackages.SingleOrDefaultAsync(p => p.Id == id, ct);
+        if (package is null) return TypedResults.NotFound();
+
+        if (request.ParentId is { } parentId)
+        {
+            var parent = await db.WorkPackages.AsNoTracking().SingleOrDefaultAsync(p => p.Id == parentId, ct);
+            if (parent is null)
+                return new ValidationErrors().Add("parentId", "not_found", "Parent work package does not exist.").ToProblem();
+            if (parent.ProjectId != package.ProjectId)
+                return new ValidationErrors()
+                    .Add("parentId", "other_project", "A work package cannot be moved into another project.").ToProblem();
+
+            // Walk up from the new parent: meeting the package itself means it would become its own descendant.
+            var projectPackages = await LoadProjectPackages(db, package.ProjectId, ct);
+            var parentOf = projectPackages.ToDictionary(p => p.Id, p => p.ParentId);
+            for (Guid? current = parentId; current is not null; current = parentOf.GetValueOrDefault(current.Value))
+            {
+                if (current == id)
+                    return new ValidationErrors()
+                        .Add("parentId", "cycle", "A work package cannot be moved under itself or one of its sub work packages.")
+                        .ToProblem();
+            }
+        }
+
+        package.MoveTo(request.ParentId);
+        await db.SaveChangesAsync(ct);
+
+        return TypedResults.Ok(await ToResponse(db, package, ct));
     }
 
     private static async Task<Results<NoContent, NotFound>> DeleteWorkPackage(
@@ -136,6 +200,23 @@ public static class WorkPackageEndpoints
         await db.SaveChangesAsync(ct);
 
         return TypedResults.NoContent();
+    }
+
+    private static async Task<List<WorkPackage>> LoadProjectPackages(
+        ProjectOverviewDbContext db, Guid projectId, CancellationToken ct) =>
+        await db.WorkPackages.AsNoTracking()
+            .Where(p => p.ProjectId == projectId)
+            .OrderBy(p => p.CreatedAt).ThenBy(p => p.Id)
+            .ToListAsync(ct);
+
+    private static Task<bool> HasChildren(ProjectOverviewDbContext db, Guid id, CancellationToken ct) =>
+        db.WorkPackages.AnyAsync(p => p.ParentId == id, ct);
+
+    private static async Task<WorkPackageResponse> ToResponse(
+        ProjectOverviewDbContext db, WorkPackage package, CancellationToken ct)
+    {
+        var effective = WorkPackageHierarchy.Resolve(await LoadProjectPackages(db, package.ProjectId, ct));
+        return WorkPackageResponse.From(package, effective[package.Id]);
     }
 
     private static string? NormalizeDescription(string? description) =>
