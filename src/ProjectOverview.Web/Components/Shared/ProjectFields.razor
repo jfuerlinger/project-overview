@@ -1,0 +1,23 @@
+<div class="mb-2">
+    <label class="form-label" for="@($"{IdPrefix}-name")">Name</label>
+    <InputText id="@($"{IdPrefix}-name")" class="form-control" @bind-Value="Form.Name" />
+</div>
+<div class="mb-2">
+    <label class="form-label" for="@($"{IdPrefix}-description")">Beschreibung</label>
+    <InputTextArea id="@($"{IdPrefix}-description")" class="form-control" @bind-Value="Form.Description" />
+</div>
+<div class="row mb-2">
+    <div class="col">
+        <label class="form-label" for="@($"{IdPrefix}-start")">Startdatum</label>
+        <InputDate id="@($"{IdPrefix}-start")" class="form-control" @bind-Value="Form.StartDate" />
+    </div>
+    <div class="col">
+        <label class="form-label" for="@($"{IdPrefix}-target")">Zieldatum</label>
+        <InputDate id="@($"{IdPrefix}-target")" class="form-control" @bind-Value="Form.TargetDate" />
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ProjectForm Form { get; set; } = default!;
+    [Parameter, EditorRequired] public string IdPrefix { get; set; } = "";
+}

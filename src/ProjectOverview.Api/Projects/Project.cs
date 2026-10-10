@@ -30,4 +30,14 @@ public sealed class Project
         Status = ProjectStatus.Open,
         CreatedAt = DateTimeOffset.UtcNow,
     };
+
+    public void Update(string name, string? description, DateOnly? startDate, DateOnly? targetDate)
+    {
+        Name = name;
+        Description = description;
+        StartDate = startDate;
+        TargetDate = targetDate;
+    }
+
+    public void SetStatus(ProjectStatus status) => Status = status;
 }

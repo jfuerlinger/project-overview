@@ -12,40 +12,16 @@
     <div class="alert alert-danger" role="alert">@_loadError</div>
 }
 
+@if (_actionError is not null)
+{
+    <div class="alert alert-danger" role="alert">@_actionError</div>
+}
+
 <section class="mb-4">
     <h2 class="h4">Projekt anlegen</h2>
-    <EditForm Model="_form" OnSubmit="CreateProject" FormName="create-project">
-        <div class="mb-2">
-            <label class="form-label" for="name">Name</label>
-            <InputText id="name" class="form-control" @bind-Value="_form.Name" />
-        </div>
-        <div class="mb-2">
-            <label class="form-label" for="description">Beschreibung</label>
-            <InputTextArea id="description" class="form-control" @bind-Value="_form.Description" />
-        </div>
-        <div class="row mb-2">
-            <div class="col">
-                <label class="form-label" for="startDate">Startdatum</label>
-                <InputDate id="startDate" class="form-control" @bind-Value="_form.StartDate" />
-            </div>
-            <div class="col">
-                <label class="form-label" for="targetDate">Zieldatum</label>
-                <InputDate id="targetDate" class="form-control" @bind-Value="_form.TargetDate" />
-            </div>
-        </div>
-
-        @if (_formErrors.Count > 0)
-        {
-            <div class="alert alert-danger" role="alert">
-                <ul class="mb-0">
-                    @foreach (var message in _formErrors)
-                    {
-                        <li>@message</li>
-                    }
-                </ul>
-            </div>
-        }
-
+    <EditForm Model="_createForm" OnSubmit="CreateProject" FormName="create-project">
+        <ProjectFields Form="_createForm" IdPrefix="create" />
+        <ErrorList Errors="_createErrors" />
         <button type="submit" class="btn btn-primary" disabled="@_saving">Anlegen</button>
     </EditForm>
 </section>
@@ -65,30 +41,69 @@
     }
     else
     {
-        <table class="table">
+        <table class="table align-middle">
             <thead>
                 <tr>
                     <th>Name</th>
                     <th>Status</th>
                     <th>Start</th>
                     <th>Ziel</th>
+                    <th></th>
                 </tr>
             </thead>
             <tbody>
                 @foreach (var project in _projects)
                 {
-                    <tr>
-                        <td>
-                            @project.Name
-                            @if (!string.IsNullOrWhiteSpace(project.Description))
-                            {
-                                <div class="text-muted small">@project.Description</div>
-                            }
-                        </td>
-                        <td>@StatusLabel(project.Status)</td>
-                        <td>@(project.StartDate?.ToString("yyyy-MM-dd") ?? "–")</td>
-                        <td>@(project.TargetDate?.ToString("yyyy-MM-dd") ?? "–")</td>
-                    </tr>
+                    @if (_editingId == project.Id)
+                    {
+                        <tr>
+                            <td colspan="5">
+                                <EditForm Model="_editForm" OnSubmit="() => SaveEdit(project.Id)" FormName="@($"edit-{project.Id}")">
+                                    <ProjectFields Form="_editForm" IdPrefix="@($"edit-{project.Id}")" />
+                                    <ErrorList Errors="_editErrors" />
+                                    <button type="submit" class="btn btn-primary btn-sm" disabled="@_saving">Speichern</button>
+                                    <button type="button" class="btn btn-secondary btn-sm" @onclick="CancelEdit">Abbrechen</button>
+                                </EditForm>
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        <tr>
+                            <td>
+                                @project.Name
+                                @if (!string.IsNullOrWhiteSpace(project.Description))
+                                {
+                                    <div class="text-muted small">@project.Description</div>
+                                }
+                            </td>
+                            <td>
+                                <select @key="@($"{project.Id}-{_statusRefresh}")" class="form-select form-select-sm"
+                                        aria-label="Status von @project.Name" disabled="@_saving"
+                                        value="@project.Status" @onchange="e => SetStatus(project.Id, e.Value?.ToString())">
+                                    @foreach (var status in Enum.GetValues<ProjectStatus>())
+                                    {
+                                        <option value="@status">@StatusLabel(status)</option>
+                                    }
+                                </select>
+                            </td>
+                            <td>@(project.StartDate?.ToString("yyyy-MM-dd") ?? "–")</td>
+                            <td>@(project.TargetDate?.ToString("yyyy-MM-dd") ?? "–")</td>
+                            <td class="text-end text-nowrap">
+                                @if (_deleteConfirmId == project.Id)
+                                {
+                                    <span class="me-2">Wirklich löschen?</span>
+                                    <button type="button" class="btn btn-danger btn-sm" @onclick="() => Delete(project.Id)">Ja, löschen</button>
+                                    <button type="button" class="btn btn-secondary btn-sm" @onclick="() => _deleteConfirmId = null">Abbrechen</button>
+                                }
+                                else
+                                {
+                                    <button type="button" class="btn btn-outline-primary btn-sm" @onclick="() => StartEdit(project)">Bearbeiten</button>
+                                    <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => _deleteConfirmId = project.Id">Löschen</button>
+                                }
+                            </td>
+                        </tr>
+                    }
                 }
             </tbody>
         </table>
@@ -96,11 +111,17 @@
 </section>
 
 @code {
-    private readonly ProjectForm _form = new();
-    private List<string> _formErrors = [];
+    private readonly ProjectForm _createForm = new();
+    private readonly ProjectForm _editForm = new();
+    private List<string> _createErrors = [];
+    private List<string> _editErrors = [];
     private List<ProjectResponse>? _projects;
     private string? _loadError;
+    private string? _actionError;
+    private Guid? _editingId;
+    private Guid? _deleteConfirmId;
     private bool _saving;
+    private int _statusRefresh;
 
     protected override async Task OnInitializedAsync() => await Load();
 
@@ -121,43 +142,107 @@
         }
     }
 
-    private async Task CreateProject()
+    /// <summary>Runs an API call, returns the validation messages if the API rejected it, or an empty list on success.</summary>
+    private async Task<List<string>> Call(Func<Task> call)
     {
         _saving = true;
-        _formErrors = [];
-        var created = false;
         try
         {
-            await Api.CreateProjectAsync(new CreateProjectRequest
-            {
-                Name = _form.Name,
-                Description = _form.Description,
-                StartDate = _form.StartDate,
-                TargetDate = _form.TargetDate,
-            });
-            _form.Reset();
-            created = true;
+            await call();
+            return [];
         }
         catch (ApiException<HttpValidationProblemDetails> exception)
         {
-            _formErrors = exception.Result.Errors?.SelectMany(error => error.Value).ToList() ?? [];
-            if (_formErrors.Count == 0) _formErrors.Add(exception.Result.Title ?? "Die API hat die Eingabe abgelehnt.");
+            var messages = exception.Result?.Errors?.SelectMany(error => error.Value).ToList() ?? [];
+            if (messages.Count == 0) messages.Add(exception.Result?.Title ?? "Die API hat die Eingabe abgelehnt.");
+            return messages;
+        }
+        catch (ApiException exception) when (exception.StatusCode == 404)
+        {
+            return ["Das Projekt existiert nicht mehr."];
         }
         catch (ApiException exception)
         {
-            _formErrors = [exception.Message];
+            return [exception.Message];
         }
         catch (HttpRequestException)
         {
-            _formErrors = ["Die API ist nicht erreichbar."];
+            return ["Die API ist nicht erreichbar."];
         }
         finally
         {
             _saving = false;
         }
+    }
+
+    private async Task CreateProject()
+    {
+        _actionError = null;
+        _createErrors = await Call(() => Api.CreateProjectAsync(new CreateProjectRequest
+        {
+            Name = _createForm.Name,
+            Description = _createForm.Description,
+            StartDate = _createForm.StartDate,
+            TargetDate = _createForm.TargetDate,
+        }));
 
         // Refreshing is separate from creating: a failed refresh must not look like a failed create.
-        if (created) await Load();
+        if (_createErrors.Count > 0) return;
+        _createForm.Reset();
+        await Load();
+    }
+
+    private void StartEdit(ProjectResponse project)
+    {
+        _editingId = project.Id;
+        _editErrors = [];
+        _actionError = null;
+        _editForm.Name = project.Name;
+        _editForm.Description = project.Description;
+        _editForm.StartDate = project.StartDate;
+        _editForm.TargetDate = project.TargetDate;
+    }
+
+    private void CancelEdit() => _editingId = null;
+
+    private async Task SaveEdit(Guid id)
+    {
+        if (_saving) return;
+        _actionError = null;
+        _editErrors = await Call(() => Api.UpdateProjectAsync(id, new UpdateProjectRequest
+        {
+            Name = _editForm.Name,
+            Description = _editForm.Description,
+            StartDate = _editForm.StartDate,
+            TargetDate = _editForm.TargetDate,
+        }));
+
+        if (_editErrors.Count > 0) return;
+        _editingId = null;
+        await Load();
+    }
+
+    private async Task SetStatus(Guid id, string? value)
+    {
+        if (_saving) return;
+        _actionError = null;
+        if (!Enum.TryParse<ProjectStatus>(value, ignoreCase: true, out var status)) return;
+
+        var errors = await Call(() => Api.SetProjectStatusAsync(id, new SetProjectStatusRequest { Status = status }));
+        _actionError = errors.FirstOrDefault();
+        // The browser keeps the rejected choice in the <select>; a new key makes it show the server's value again.
+        if (_actionError is not null) _statusRefresh++;
+        await Load();
+    }
+
+    private async Task Delete(Guid id)
+    {
+        if (_saving) return;
+        _actionError = null;
+        _deleteConfirmId = null;
+        var errors = await Call(() => Api.DeleteProjectAsync(id));
+        _actionError = errors.FirstOrDefault();
+        await Load();
     }
 
     private static string StatusLabel(ProjectStatus status) => status switch
@@ -168,20 +253,4 @@
         ProjectStatus.Discarded => "Verworfen",
         _ => status.ToString(),
     };
-
-    private sealed class ProjectForm
-    {
-        public string Name { get; set; } = "";
-        public string? Description { get; set; }
-        public DateOnly? StartDate { get; set; }
-        public DateOnly? TargetDate { get; set; }
-
-        public void Reset()
-        {
-            Name = "";
-            Description = null;
-            StartDate = null;
-            TargetDate = null;
-        }
-    }
 }

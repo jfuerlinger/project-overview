@@ -33,6 +33,13 @@ public static class CliApp
 
     private sealed record RunContext(CliEnvironment Environment);
 
+    /// <summary>A failure the CLI itself detects (not the API); reported like API errors.</summary>
+    private sealed class CliFailure(int exitCode, string code, string message) : Exception(message)
+    {
+        public int ExitCode { get; } = exitCode;
+        public string Code { get; } = code;
+    }
+
     private sealed class CommandRegistry
     {
         private readonly RunContext? _context;
@@ -57,6 +64,10 @@ public static class CliApp
             var projects = new Command("projects", "Manage projects.");
             projects.Subcommands.Add(ListProjectsCommand());
             projects.Subcommands.Add(CreateProjectCommand());
+            projects.Subcommands.Add(GetProjectCommand());
+            projects.Subcommands.Add(UpdateProjectCommand());
+            projects.Subcommands.Add(SetStatusCommand());
+            projects.Subcommands.Add(DeleteProjectCommand());
             Root.Subcommands.Add(projects);
         }
 
@@ -101,6 +112,123 @@ public static class CliApp
             return command;
         }
 
+        private Command GetProjectCommand()
+        {
+            var id = new Argument<Guid>("id") { Description = "Project id." };
+            var command = new Command("get", "Show one project.") { id };
+            Cover("getProject");
+            command.SetAction((parseResult, ct) => Execute(parseResult, async client =>
+            {
+                var project = ProjectOutput.From(await client.GetProjectAsync(parseResult.GetValue(id), ct));
+                if (parseResult.GetValue(_json)) WriteJson(project);
+                else WriteTable([project]);
+            }));
+            return command;
+        }
+
+        private Command UpdateProjectCommand()
+        {
+            var id = new Argument<Guid>("id") { Description = "Project id." };
+            var name = new Option<string?>("--name") { Description = "New name." };
+            var description = new Option<string?>("--description") { Description = "New description; pass \"\" to clear it." };
+            var startDate = DateOption("--start-date", "New start date (yyyy-MM-dd).");
+            var targetDate = DateOption("--target-date", "New target date (yyyy-MM-dd).");
+            var clearStartDate = new Option<bool>("--clear-start-date") { Description = "Remove the start date." };
+            var clearTargetDate = new Option<bool>("--clear-target-date") { Description = "Remove the target date." };
+
+            var command = new Command("update", "Change name, description or dates of a project. Omitted fields stay as they are.")
+            {
+                id, name, description, startDate, targetDate, clearStartDate, clearTargetDate,
+            };
+            command.Validators.Add(result =>
+            {
+                if (result.GetResult(startDate) is { Implicit: false } && result.GetResult(clearStartDate) is { Implicit: false })
+                    result.AddError("--start-date and --clear-start-date cannot be combined.");
+                if (result.GetResult(targetDate) is { Implicit: false } && result.GetResult(clearTargetDate) is { Implicit: false })
+                    result.AddError("--target-date and --clear-target-date cannot be combined.");
+            });
+            Cover("updateProject");
+            command.SetAction((parseResult, ct) => Execute(parseResult, async client =>
+            {
+                bool Given(Option option) => parseResult.GetResult(option) is { Implicit: false };
+                if (!new Option[] { name, description, startDate, targetDate, clearStartDate, clearTargetDate }.Any(Given))
+                    throw new CliFailure(1, "nothing_to_update", "Pass at least one option to change.");
+
+                // The API replaces all fields, so start from the current values and overlay what was given.
+                var projectId = parseResult.GetValue(id);
+                var current = await client.GetProjectAsync(projectId, ct);
+                var updated = await client.UpdateProjectAsync(projectId, new UpdateProjectRequest
+                {
+                    Name = Given(name) ? parseResult.GetValue(name) : current.Name,
+                    Description = Given(description) ? parseResult.GetValue(description) : current.Description,
+                    StartDate = Given(clearStartDate) ? null : Given(startDate) ? parseResult.GetValue(startDate) : current.StartDate,
+                    TargetDate = Given(clearTargetDate) ? null : Given(targetDate) ? parseResult.GetValue(targetDate) : current.TargetDate,
+                }, ct);
+
+                var output = ProjectOutput.From(updated);
+                if (parseResult.GetValue(_json)) WriteJson(output);
+                else WriteTable([output]);
+            }));
+            return command;
+        }
+
+        private Command SetStatusCommand()
+        {
+            var id = new Argument<Guid>("id") { Description = "Project id." };
+            var status = new Argument<string>("status") { Description = "New status." };
+            status.AcceptOnlyFromAmong(
+                Enum.GetNames<ProjectStatus>().Select(name => JsonNamingPolicy.CamelCase.ConvertName(name)).ToArray());
+
+            var command = new Command("set-status", "Set the status of a project.") { id, status };
+            Cover("setProjectStatus");
+            command.SetAction((parseResult, ct) => Execute(parseResult, async client =>
+            {
+                var updated = await client.SetProjectStatusAsync(parseResult.GetValue(id), new SetProjectStatusRequest
+                {
+                    Status = Enum.Parse<ProjectStatus>(parseResult.GetValue(status)!, ignoreCase: true),
+                }, ct);
+                var output = ProjectOutput.From(updated);
+                if (parseResult.GetValue(_json)) WriteJson(output);
+                else WriteTable([output]);
+            }));
+            return command;
+        }
+
+        private Command DeleteProjectCommand()
+        {
+            var id = new Argument<Guid>("id") { Description = "Project id." };
+            var yes = new Option<bool>("--yes", "-y") { Description = "Delete without asking for confirmation." };
+
+            var command = new Command("delete", "Delete a project.") { id, yes };
+            Cover("deleteProject");
+            command.SetAction((parseResult, ct) => Execute(parseResult, async client =>
+            {
+                var projectId = parseResult.GetValue(id);
+
+                // The lookup is only needed to name the project in the prompt.
+                if (!parseResult.GetValue(yes))
+                {
+                    var project = await client.GetProjectAsync(projectId, ct);
+                    if (!Confirm($"Delete project '{project.Name}' ({project.Id})? [y/N] "))
+                        throw new CliFailure(1, "confirmation_required", "Deletion not confirmed. Pass --yes to delete without asking.");
+                }
+
+                await client.DeleteProjectAsync(projectId, ct);
+                if (parseResult.GetValue(_json)) WriteJson(new { deleted = projectId });
+                else _context!.Environment.Out.WriteLine($"Deleted {projectId}");
+            }));
+            return command;
+        }
+
+        private bool Confirm(string question)
+        {
+            var environment = _context!.Environment;
+            environment.Error.Write(question);
+            var answer = environment.ReadLine()?.Trim();
+            environment.Error.WriteLine();
+            return answer is not null && answer.ToLowerInvariant() is "y" or "yes" or "j" or "ja";
+        }
+
         private void Cover(string operationId) => _operations.Add(operationId);
 
         private static Option<DateOnly?> DateOption(string name, string description) => new(name)
@@ -127,6 +255,10 @@ public static class CliApp
                 var client = new ProjectOverviewClient(environment.CreateHttpClient(address));
                 await action(client);
                 return 0;
+            }
+            catch (CliFailure failure)
+            {
+                return Fail(failure.ExitCode, new { code = failure.Code, title = failure.Message });
             }
             catch (ApiException<HttpValidationProblemDetails> exception)
             {

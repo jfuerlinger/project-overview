@@ -14,7 +14,7 @@ builder.Services.AddDbContext<ProjectOverviewDbContext>((services, options) =>
 });
 
 builder.Services.ConfigureHttpJsonOptions(options =>
-    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase)));
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false)));
 // NSwag (used to generate the CLI client) does not read OpenAPI 3.1 reliably.
 builder.Services.AddOpenApi(options =>
 {
