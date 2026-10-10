@@ -29,6 +29,7 @@ public static class CliApp
         root.Options.Add(context.ApiUrl);
         root.Subcommands.Add(ProjectCommands.Build(context));
         root.Subcommands.Add(WorkPackageCommands.Build(context));
+        root.Subcommands.Add(MilestoneCommands.Build(context));
         return (root, context.Operations);
     }
 }

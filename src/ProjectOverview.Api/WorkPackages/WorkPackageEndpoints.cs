@@ -29,11 +29,12 @@ public sealed record WorkPackageResponse(
     int? DurationDays,
     DateOnly? StartDate,
     DateOnly? EndDate,
-    WorkPackageStatus Status)
+    WorkPackageStatus Status,
+    Guid? MilestoneId)
 {
     public static WorkPackageResponse From(WorkPackage package) => new(
         package.Id, package.ProjectId, package.Title, package.Description,
-        package.DurationDays, package.StartDate, package.EndDate, package.Status);
+        package.DurationDays, package.StartDate, package.EndDate, package.Status, package.MilestoneId);
 }
 
 public static class WorkPackageEndpoints

@@ -1,0 +1,223 @@
+@using ProjectOverview.Client
+@inject ProjectOverviewClient Api
+
+<section class="mb-4">
+    <h2 class="h4">Meilensteine</h2>
+
+    @if (_loadError is not null)
+    {
+        <div class="alert alert-danger" role="alert">@_loadError</div>
+    }
+    @if (_actionError is not null)
+    {
+        <div class="alert alert-danger" role="alert">@_actionError</div>
+    }
+
+    @if (_milestones is null)
+    {
+        <p>Lade Meilensteine…</p>
+    }
+    else if (_milestones.Count == 0)
+    {
+        <p>Noch keine Meilensteine.</p>
+    }
+    else
+    {
+        <ul class="list-group mb-3">
+            @foreach (var milestone in _milestones)
+            {
+                <li class="list-group-item">
+                    @if (_editingId == milestone.Id)
+                    {
+                        <EditForm Model="_editForm" OnSubmit="() => SaveEdit(milestone.Id)" FormName="@($"edit-milestone-{milestone.Id}")">
+                            <MilestoneFields Form="_editForm" IdPrefix="@($"edit-milestone-{milestone.Id}")" />
+                            <ErrorList Errors="_editErrors" />
+                            <button type="submit" class="btn btn-primary btn-sm" disabled="@_saving">Speichern</button>
+                            <button type="button" class="btn btn-secondary btn-sm" @onclick="() => _editingId = null">Abbrechen</button>
+                        </EditForm>
+                    }
+                    else
+                    {
+                        <div class="d-flex align-items-center gap-3">
+                            <span class="fs-4 text-warning" aria-hidden="true">◆</span>
+                            <div class="flex-grow-1">
+                                <strong>@milestone.Title</strong>
+                                <span class="badge text-bg-light ms-2">Ziel: @milestone.TargetDate.ToString("yyyy-MM-dd")</span>
+                                <span class="text-muted small ms-2">@PackageCountText(milestone.Id)</span>
+                                @if (!string.IsNullOrWhiteSpace(milestone.Description))
+                                {
+                                    <div class="text-muted small">@milestone.Description</div>
+                                }
+                            </div>
+                            <div class="text-nowrap">
+                                @if (_deleteConfirmId == milestone.Id)
+                                {
+                                    <span class="me-2">Wirklich löschen?</span>
+                                    <button type="button" class="btn btn-danger btn-sm" @onclick="() => Delete(milestone.Id)">Ja, löschen</button>
+                                    <button type="button" class="btn btn-secondary btn-sm" @onclick="() => _deleteConfirmId = null">Abbrechen</button>
+                                }
+                                else
+                                {
+                                    <button type="button" class="btn btn-outline-primary btn-sm" @onclick="() => StartEdit(milestone)">Bearbeiten</button>
+                                    <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => AskDelete(milestone.Id)">Löschen</button>
+                                }
+                            </div>
+                        </div>
+                    }
+                </li>
+            }
+        </ul>
+    }
+
+    <h3 class="h5">Meilenstein anlegen</h3>
+    <EditForm Model="_createForm" OnSubmit="Create" FormName="create-milestone">
+        <MilestoneFields Form="_createForm" IdPrefix="create-milestone" />
+        <ErrorList Errors="_createErrors" />
+        <button type="submit" class="btn btn-primary" disabled="@_saving">Meilenstein anlegen</button>
+    </EditForm>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public Guid ProjectId { get; set; }
+
+    /// <summary>The project's work packages; used to show how many are assigned to each milestone.</summary>
+    [Parameter] public IReadOnlyList<WorkPackageResponse>? Packages { get; set; }
+
+    /// <summary>Raised after the list was (re)loaded or changed, so the page can refresh what depends on it.</summary>
+    [Parameter] public EventCallback<IReadOnlyList<MilestoneResponse>> MilestonesChanged { get; set; }
+
+    /// <summary>Raised after a milestone was deleted: its work packages are unassigned on the server.</summary>
+    [Parameter] public EventCallback MilestoneDeleted { get; set; }
+
+    private readonly MilestoneForm _createForm = new();
+    private readonly MilestoneForm _editForm = new();
+    private List<MilestoneResponse>? _milestones;
+    private List<string> _createErrors = [];
+    private List<string> _editErrors = [];
+    private string? _loadError;
+    private string? _actionError;
+    private Guid? _editingId;
+    private Guid? _deleteConfirmId;
+    private bool _saving;
+    private Guid _loadedFor;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // The component instance is reused when navigating from one project to another.
+        if (_loadedFor == ProjectId) return;
+        _loadedFor = ProjectId;
+        _milestones = null;
+        _editingId = null;
+        _deleteConfirmId = null;
+        _actionError = null;
+        _createErrors = [];
+        _editErrors = [];
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        // A failed refresh keeps what was shown before; the list is only replaced by a successful load.
+        try
+        {
+            _milestones = (await Api.ListMilestonesAsync(ProjectId)).ToList();
+            _loadError = null;
+        }
+        catch (HttpRequestException)
+        {
+            _loadError = "Die API ist nicht erreichbar.";
+            return;
+        }
+        catch (ApiException)
+        {
+            _loadError = "Die Meilensteine konnten nicht geladen werden.";
+            return;
+        }
+
+        await MilestonesChanged.InvokeAsync(_milestones);
+    }
+
+    private string PackageCountText(Guid milestoneId)
+    {
+        var count = Packages?.Count(p => p.MilestoneId == milestoneId) ?? 0;
+        return count switch
+        {
+            0 => "keine Arbeitspakete",
+            1 => "1 Arbeitspaket",
+            _ => $"{count} Arbeitspakete",
+        };
+    }
+
+    private async Task<List<string>> Call(Func<Task> call)
+    {
+        _saving = true;
+        try
+        {
+            return await ApiCall.Run(call);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task Create()
+    {
+        if (_saving) return;
+        _actionError = null;
+        _createErrors = await Call(() => Api.CreateMilestoneAsync(ProjectId, new CreateMilestoneRequest
+        {
+            Title = _createForm.Title,
+            Description = _createForm.Description,
+            TargetDate = _createForm.TargetDate,
+        }));
+
+        if (_createErrors.Count > 0) return;
+        _createForm.Reset();
+        await Load();
+    }
+
+    private void StartEdit(MilestoneResponse milestone)
+    {
+        _editingId = milestone.Id;
+        _deleteConfirmId = null;
+        _editErrors = [];
+        _actionError = null;
+        _editForm.Title = milestone.Title;
+        _editForm.Description = milestone.Description;
+        _editForm.TargetDate = milestone.TargetDate;
+    }
+
+    private void AskDelete(Guid id)
+    {
+        _editingId = null;
+        _deleteConfirmId = id;
+    }
+
+    private async Task SaveEdit(Guid id)
+    {
+        if (_saving) return;
+        _actionError = null;
+        _editErrors = await Call(() => Api.UpdateMilestoneAsync(id, new UpdateMilestoneRequest
+        {
+            Title = _editForm.Title,
+            Description = _editForm.Description,
+            TargetDate = _editForm.TargetDate,
+        }));
+
+        if (_editErrors.Count > 0) return;
+        _editingId = null;
+        await Load();
+    }
+
+    private async Task Delete(Guid id)
+    {
+        if (_saving) return;
+        _actionError = null;
+        _deleteConfirmId = null;
+        var errors = await Call(() => Api.DeleteMilestoneAsync(id));
+        _actionError = errors.FirstOrDefault();
+        await Load();
+        if (_actionError is null) await MilestoneDeleted.InvokeAsync();
+    }
+}

@@ -19,6 +19,7 @@ public static class ApiErrorMessages
         ["status"] = "Der Status",
         ["title"] = "Der Titel",
         ["durationDays"] = "Die Dauer",
+        ["milestoneId"] = "Der Meilenstein",
     };
 
     public static List<string> From(ValidationProblem? problem)
@@ -52,6 +53,8 @@ public static class ApiErrorMessages
             "required" => $"{label} ist erforderlich.",
             "max_length" when argument is not null => $"{label} darf höchstens {argument} Zeichen lang sein.",
             "before_start_date" => $"{label} darf nicht vor dem Startdatum liegen.",
+            "not_found" => $"{label} existiert nicht.",
+            "other_project" => $"{label} gehört zu einem anderen Projekt.",
             "min_value" when argument is not null => $"{label} muss mindestens {argument} betragen.",
             "max_value" when argument is not null => $"{label} darf höchstens {argument} betragen.",
             _ => null,

@@ -8,11 +8,11 @@ internal static class WorkPackageCommands
     /// <summary>The CLI's JSON contract for a work package.</summary>
     private sealed record WorkPackageOutput(
         Guid Id, Guid ProjectId, string Title, string? Description, int? DurationDays,
-        DateOnly? StartDate, DateOnly? EndDate, string Status)
+        DateOnly? StartDate, DateOnly? EndDate, string Status, Guid? MilestoneId)
     {
         public static WorkPackageOutput From(WorkPackageResponse package) => new(
             package.Id, package.ProjectId, package.Title, package.Description, package.DurationDays,
-            package.StartDate, package.EndDate, CliContext.StatusName(package.Status));
+            package.StartDate, package.EndDate, CliContext.StatusName(package.Status), package.MilestoneId);
     }
 
     public static Command Build(CliContext context)
@@ -23,6 +23,7 @@ internal static class WorkPackageCommands
         packages.Subcommands.Add(Get(context));
         packages.Subcommands.Add(Update(context));
         packages.Subcommands.Add(SetStatus(context));
+        packages.Subcommands.Add(SetMilestone(context));
         packages.Subcommands.Add(Delete(context));
         return packages;
     }
@@ -37,11 +38,11 @@ internal static class WorkPackageCommands
         }
 
         context.WriteTable(
-            ["ID", "TITLE", "STATUS", "DAYS", "START", "END"],
+            ["ID", "TITLE", "STATUS", "DAYS", "START", "END", "MILESTONE"],
             packages.Select(p => new[]
             {
                 p.Id.ToString(), p.Title, p.Status, p.DurationDays?.ToString() ?? "-",
-                CliContext.DateText(p.StartDate), CliContext.DateText(p.EndDate),
+                CliContext.DateText(p.StartDate), CliContext.DateText(p.EndDate), p.MilestoneId?.ToString() ?? "-",
             }));
     }
 
@@ -169,6 +170,34 @@ internal static class WorkPackageCommands
             var updated = await client.SetWorkPackageStatusAsync(parseResult.GetValue(id), new SetWorkPackageStatusRequest
             {
                 Status = Enum.Parse<WorkPackageStatus>(parseResult.GetValue(status)!, ignoreCase: true),
+            }, ct);
+            Print(context, parseResult, [WorkPackageOutput.From(updated)], asList: false);
+        }));
+        return command;
+    }
+
+    private static Command SetMilestone(CliContext context)
+    {
+        var id = new Argument<Guid>("id") { Description = "Work package id." };
+        var milestone = new Option<Guid?>("--milestone") { Description = "Milestone id (must belong to the same project)." };
+        var clear = new Option<bool>("--clear") { Description = "Remove the assignment." };
+
+        var command = new Command("set-milestone", "Assign a work package to a milestone, or remove the assignment.")
+        {
+            id, milestone, clear,
+        };
+        command.Validators.Add(result =>
+        {
+            var hasMilestone = result.GetResult(milestone) is { Implicit: false };
+            var hasClear = result.GetResult(clear) is { Implicit: false };
+            if (hasMilestone == hasClear) result.AddError("Pass exactly one of --milestone <id> or --clear.");
+        });
+        context.Cover("setWorkPackageMilestone");
+        command.SetAction((parseResult, ct) => context.Execute(parseResult, async client =>
+        {
+            var updated = await client.SetWorkPackageMilestoneAsync(parseResult.GetValue(id), new SetWorkPackageMilestoneRequest
+            {
+                MilestoneId = parseResult.GetValue(clear) ? null : parseResult.GetValue(milestone),
             }, ct);
             Print(context, parseResult, [WorkPackageOutput.From(updated)], asList: false);
         }));

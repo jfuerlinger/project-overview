@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using ProjectOverview.Api;
+using ProjectOverview.Api.Milestones;
 using ProjectOverview.Api.Projects;
 using ProjectOverview.Api.WorkPackages;
 
@@ -38,6 +39,7 @@ using (var scope = app.Services.CreateScope())
 app.MapOpenApi();
 app.MapProjectEndpoints();
 app.MapWorkPackageEndpoints();
+app.MapMilestoneEndpoints();
 
 app.Run();
 
