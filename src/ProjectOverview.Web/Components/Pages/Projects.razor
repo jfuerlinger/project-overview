@@ -1,0 +1,187 @@
+@page "/"
+@rendermode InteractiveServer
+@using ProjectOverview.Client
+@inject ProjectOverviewClient Api
+
+<PageTitle>Projekte</PageTitle>
+
+<h1>Projekte</h1>
+
+@if (_loadError is not null)
+{
+    <div class="alert alert-danger" role="alert">@_loadError</div>
+}
+
+<section class="mb-4">
+    <h2 class="h4">Projekt anlegen</h2>
+    <EditForm Model="_form" OnSubmit="CreateProject" FormName="create-project">
+        <div class="mb-2">
+            <label class="form-label" for="name">Name</label>
+            <InputText id="name" class="form-control" @bind-Value="_form.Name" />
+        </div>
+        <div class="mb-2">
+            <label class="form-label" for="description">Beschreibung</label>
+            <InputTextArea id="description" class="form-control" @bind-Value="_form.Description" />
+        </div>
+        <div class="row mb-2">
+            <div class="col">
+                <label class="form-label" for="startDate">Startdatum</label>
+                <InputDate id="startDate" class="form-control" @bind-Value="_form.StartDate" />
+            </div>
+            <div class="col">
+                <label class="form-label" for="targetDate">Zieldatum</label>
+                <InputDate id="targetDate" class="form-control" @bind-Value="_form.TargetDate" />
+            </div>
+        </div>
+
+        @if (_formErrors.Count > 0)
+        {
+            <div class="alert alert-danger" role="alert">
+                <ul class="mb-0">
+                    @foreach (var message in _formErrors)
+                    {
+                        <li>@message</li>
+                    }
+                </ul>
+            </div>
+        }
+
+        <button type="submit" class="btn btn-primary" disabled="@_saving">Anlegen</button>
+    </EditForm>
+</section>
+
+<section>
+    @if (_loadError is not null && _projects is null)
+    {
+        <p>Keine Daten verfügbar.</p>
+    }
+    else if (_projects is null)
+    {
+        <p>Lade Projekte…</p>
+    }
+    else if (_projects.Count == 0)
+    {
+        <p>Noch keine Projekte.</p>
+    }
+    else
+    {
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Status</th>
+                    <th>Start</th>
+                    <th>Ziel</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var project in _projects)
+                {
+                    <tr>
+                        <td>
+                            @project.Name
+                            @if (!string.IsNullOrWhiteSpace(project.Description))
+                            {
+                                <div class="text-muted small">@project.Description</div>
+                            }
+                        </td>
+                        <td>@StatusLabel(project.Status)</td>
+                        <td>@(project.StartDate?.ToString("yyyy-MM-dd") ?? "–")</td>
+                        <td>@(project.TargetDate?.ToString("yyyy-MM-dd") ?? "–")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+@code {
+    private readonly ProjectForm _form = new();
+    private List<string> _formErrors = [];
+    private List<ProjectResponse>? _projects;
+    private string? _loadError;
+    private bool _saving;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        try
+        {
+            _projects = (await Api.ListProjectsAsync()).ToList();
+            _loadError = null;
+        }
+        catch (HttpRequestException)
+        {
+            _loadError = "Die API ist nicht erreichbar.";
+        }
+        catch (ApiException)
+        {
+            _loadError = "Die Projekte konnten nicht geladen werden.";
+        }
+    }
+
+    private async Task CreateProject()
+    {
+        _saving = true;
+        _formErrors = [];
+        var created = false;
+        try
+        {
+            await Api.CreateProjectAsync(new CreateProjectRequest
+            {
+                Name = _form.Name,
+                Description = _form.Description,
+                StartDate = _form.StartDate,
+                TargetDate = _form.TargetDate,
+            });
+            _form.Reset();
+            created = true;
+        }
+        catch (ApiException<HttpValidationProblemDetails> exception)
+        {
+            _formErrors = exception.Result.Errors?.SelectMany(error => error.Value).ToList() ?? [];
+            if (_formErrors.Count == 0) _formErrors.Add(exception.Result.Title ?? "Die API hat die Eingabe abgelehnt.");
+        }
+        catch (ApiException exception)
+        {
+            _formErrors = [exception.Message];
+        }
+        catch (HttpRequestException)
+        {
+            _formErrors = ["Die API ist nicht erreichbar."];
+        }
+        finally
+        {
+            _saving = false;
+        }
+
+        // Refreshing is separate from creating: a failed refresh must not look like a failed create.
+        if (created) await Load();
+    }
+
+    private static string StatusLabel(ProjectStatus status) => status switch
+    {
+        ProjectStatus.Open => "Offen",
+        ProjectStatus.InProgress => "In Arbeit",
+        ProjectStatus.Done => "Erledigt",
+        ProjectStatus.Discarded => "Verworfen",
+        _ => status.ToString(),
+    };
+
+    private sealed class ProjectForm
+    {
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+        public DateOnly? StartDate { get; set; }
+        public DateOnly? TargetDate { get; set; }
+
+        public void Reset()
+        {
+            Name = "";
+            Description = null;
+            StartDate = null;
+            TargetDate = null;
+        }
+    }
+}

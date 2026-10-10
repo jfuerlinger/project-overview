@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>project-overview</AssemblyName>
+    <RootNamespace>ProjectOverview.Cli</RootNamespace>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>project-overview</ToolCommandName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" Version="2.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ProjectOverview.Client\ProjectOverview.Client.csproj" />
+  </ItemGroup>
+
+</Project>

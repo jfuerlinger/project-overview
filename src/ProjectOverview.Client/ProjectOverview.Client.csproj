@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.ApiDescription.Client" Version="10.0.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="NSwag.ApiDescription.Client" Version="14.6.3">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <!-- The client is generated at build time from the checked-in OpenAPI contract. -->
+  <ItemGroup>
+    <OpenApiReference Include="openapi.json"
+                      CodeGenerator="NSwagCSharp"
+                      Namespace="ProjectOverview.Client"
+                      ClassName="ProjectOverviewClient"
+                      Options="/JsonLibrary:SystemTextJson /DateType:System.DateOnly /GenerateExceptionClasses:true /UseBaseUrl:false /OperationGenerationMode:SingleClientFromOperationId" />
+  </ItemGroup>
+
+</Project>

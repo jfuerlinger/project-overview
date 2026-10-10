@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ProjectOverview.Api/ProjectOverview.Api.csproj" />
+    <Project Path="src/ProjectOverview.AppHost/ProjectOverview.AppHost.csproj" />
+    <Project Path="src/ProjectOverview.Cli/ProjectOverview.Cli.csproj" />
+    <Project Path="src/ProjectOverview.Client/ProjectOverview.Client.csproj" />
+    <Project Path="src/ProjectOverview.Web/ProjectOverview.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ProjectOverview.Api.Tests/ProjectOverview.Api.Tests.csproj" />
+    <Project Path="tests/ProjectOverview.Cli.Tests/ProjectOverview.Cli.Tests.csproj" />
+  </Folder>
+</Solution>
