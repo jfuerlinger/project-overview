@@ -153,8 +153,8 @@
         }
         catch (ApiException<HttpValidationProblemDetails> exception)
         {
-            var messages = exception.Result?.Errors?.SelectMany(error => error.Value).ToList() ?? [];
-            if (messages.Count == 0) messages.Add(exception.Result?.Title ?? "Die API hat die Eingabe abgelehnt.");
+            var messages = ApiErrorMessages.From(exception.Result);
+            if (messages.Count == 0) messages.Add("Die API hat die Eingabe abgelehnt.");
             return messages;
         }
         catch (ApiException exception) when (exception.StatusCode == 404)

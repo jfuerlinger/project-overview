@@ -94,6 +94,34 @@ public class ProjectsApiTests : IDisposable
     }
 
     [Fact]
+    public async Task Validation_errors_carry_stable_error_codes_next_to_the_messages()
+    {
+        var response = await _client.PostAsJsonAsync("/projects", new
+        {
+            name = "  ",
+            startDate = "2026-12-31",
+            targetDate = "2026-11-01",
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var problem = await ReadJson(response);
+        var codes = problem.GetProperty("errorCodes");
+        Assert.Equal(["required"], codes.GetProperty("name").EnumerateArray().Select(c => c.GetString()));
+        Assert.Equal(["before_start_date"], codes.GetProperty("targetDate").EnumerateArray().Select(c => c.GetString()));
+        // Each code lines up with the English message at the same position.
+        Assert.Equal(1, problem.GetProperty("errors").GetProperty("name").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Too_long_name_reports_its_limit_in_the_error_code()
+    {
+        var response = await _client.PostAsJsonAsync("/projects", new { name = new string('x', 201) });
+
+        var codes = (await ReadJson(response)).GetProperty("errorCodes");
+        Assert.Equal(["max_length:200"], codes.GetProperty("name").EnumerateArray().Select(c => c.GetString()));
+    }
+
+    [Fact]
     public async Task Whitespace_only_description_is_stored_as_no_description()
     {
         var create = await _client.PostAsJsonAsync("/projects", new { name = "Auto", description = "   " });

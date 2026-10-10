@@ -63,7 +63,7 @@ public static class ProjectEndpoints
         CreateProjectRequest request, ProjectOverviewDbContext db, CancellationToken ct)
     {
         var errors = Validate(request.Name, request.Description, request.StartDate, request.TargetDate);
-        if (errors.Count > 0) return TypedResults.ValidationProblem(errors);
+        if (errors.Any) return errors.ToProblem();
 
         var project = Project.Create(
             request.Name!.Trim(), NormalizeDescription(request.Description), request.StartDate, request.TargetDate);
@@ -87,7 +87,7 @@ public static class ProjectEndpoints
         if (project is null) return TypedResults.NotFound();
 
         var errors = Validate(request.Name, request.Description, request.StartDate, request.TargetDate);
-        if (errors.Count > 0) return TypedResults.ValidationProblem(errors);
+        if (errors.Any) return errors.ToProblem();
 
         project.Update(request.Name!.Trim(), NormalizeDescription(request.Description), request.StartDate, request.TargetDate);
         await db.SaveChangesAsync(ct);
@@ -103,10 +103,9 @@ public static class ProjectEndpoints
 
         // Undefined values never get here: the JSON converter rejects them while binding the body.
         if (request.Status is not { } status)
-            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
-            {
-                ["status"] = [$"Status is required (one of: {string.Join(", ", ProjectStatusNames.All)})."],
-            });
+            return new ValidationErrors()
+                .Add("status", "required", $"Status is required (one of: {string.Join(", ", ProjectStatusNames.All)}).")
+                .ToProblem();
 
         project.SetStatus(status);
         await db.SaveChangesAsync(ct);
@@ -129,21 +128,23 @@ public static class ProjectEndpoints
     private static string? NormalizeDescription(string? description) =>
         string.IsNullOrWhiteSpace(description) ? null : description.Trim();
 
-    private static Dictionary<string, string[]> Validate(
+    private static ValidationErrors Validate(
         string? name, string? description, DateOnly? startDate, DateOnly? targetDate)
     {
-        var errors = new Dictionary<string, string[]>();
+        var errors = new ValidationErrors();
 
         if (string.IsNullOrWhiteSpace(name))
-            errors["name"] = ["Name is required."];
+            errors.Add("name", "required", "Name is required.");
         else if (name.Trim().Length > ProjectLimits.NameMaxLength)
-            errors["name"] = [$"Name must be at most {ProjectLimits.NameMaxLength} characters."];
+            errors.Add("name", $"max_length:{ProjectLimits.NameMaxLength}",
+                $"Name must be at most {ProjectLimits.NameMaxLength} characters.");
 
         if (description?.Trim() is { Length: > ProjectLimits.DescriptionMaxLength })
-            errors["description"] = [$"Description must be at most {ProjectLimits.DescriptionMaxLength} characters."];
+            errors.Add("description", $"max_length:{ProjectLimits.DescriptionMaxLength}",
+                $"Description must be at most {ProjectLimits.DescriptionMaxLength} characters.");
 
         if (startDate is { } start && targetDate is { } target && target < start)
-            errors["targetDate"] = ["Target date must not be before the start date."];
+            errors.Add("targetDate", "before_start_date", "Target date must not be before the start date.");
 
         return errors;
     }
