@@ -1,0 +1,27 @@
+<div class="mb-2">
+    <label class="form-label" for="@($"{IdPrefix}-title")">Titel</label>
+    <InputText id="@($"{IdPrefix}-title")" class="form-control" @bind-Value="Form.Title" />
+</div>
+<div class="mb-2">
+    <label class="form-label" for="@($"{IdPrefix}-description")">Beschreibung</label>
+    <InputTextArea id="@($"{IdPrefix}-description")" class="form-control" @bind-Value="Form.Description" />
+</div>
+<div class="row mb-2">
+    <div class="col">
+        <label class="form-label" for="@($"{IdPrefix}-duration")">Dauer (Tage)</label>
+        <InputNumber id="@($"{IdPrefix}-duration")" class="form-control" @bind-Value="Form.DurationDays" />
+    </div>
+    <div class="col">
+        <label class="form-label" for="@($"{IdPrefix}-start")">Startdatum</label>
+        <InputDate id="@($"{IdPrefix}-start")" class="form-control" @bind-Value="Form.StartDate" />
+    </div>
+    <div class="col">
+        <label class="form-label" for="@($"{IdPrefix}-end")">Enddatum</label>
+        <InputDate id="@($"{IdPrefix}-end")" class="form-control" @bind-Value="Form.EndDate" />
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public WorkPackageForm Form { get; set; } = default!;
+    [Parameter, EditorRequired] public string IdPrefix { get; set; } = "";
+}

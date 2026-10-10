@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using ProjectOverview.Api;
 using ProjectOverview.Api.Projects;
+using ProjectOverview.Api.WorkPackages;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -14,7 +15,12 @@ builder.Services.AddDbContext<ProjectOverviewDbContext>((services, options) =>
 });
 
 builder.Services.ConfigureHttpJsonOptions(options =>
-    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false)));
+{
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false));
+    // The web defaults accept numbers written as strings, which the OpenAPI document then describes as
+    // "integer or string" and generated clients cannot use.
+    options.SerializerOptions.NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.Strict;
+});
 // NSwag (used to generate the CLI client) does not read OpenAPI 3.1 reliably.
 builder.Services.AddOpenApi(options =>
 {
@@ -31,6 +37,7 @@ using (var scope = app.Services.CreateScope())
 
 app.MapOpenApi();
 app.MapProjectEndpoints();
+app.MapWorkPackageEndpoints();
 
 app.Run();
 

@@ -71,7 +71,7 @@
                     {
                         <tr>
                             <td>
-                                @project.Name
+                                <a href="projects/@project.Id">@project.Name</a>
                                 @if (!string.IsNullOrWhiteSpace(project.Description))
                                 {
                                     <div class="text-muted small">@project.Description</div>
@@ -99,7 +99,7 @@
                                 else
                                 {
                                     <button type="button" class="btn btn-outline-primary btn-sm" @onclick="() => StartEdit(project)">Bearbeiten</button>
-                                    <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => _deleteConfirmId = project.Id">Löschen</button>
+                                    <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => AskDelete(project.Id)">Löschen</button>
                                 }
                             </td>
                         </tr>
@@ -142,32 +142,12 @@
         }
     }
 
-    /// <summary>Runs an API call, returns the validation messages if the API rejected it, or an empty list on success.</summary>
     private async Task<List<string>> Call(Func<Task> call)
     {
         _saving = true;
         try
         {
-            await call();
-            return [];
-        }
-        catch (ApiException<HttpValidationProblemDetails> exception)
-        {
-            var messages = ApiErrorMessages.From(exception.Result);
-            if (messages.Count == 0) messages.Add("Die API hat die Eingabe abgelehnt.");
-            return messages;
-        }
-        catch (ApiException exception) when (exception.StatusCode == 404)
-        {
-            return ["Das Projekt existiert nicht mehr."];
-        }
-        catch (ApiException exception)
-        {
-            return [exception.Message];
-        }
-        catch (HttpRequestException)
-        {
-            return ["Die API ist nicht erreichbar."];
+            return await ApiCall.Run(call);
         }
         finally
         {
@@ -195,12 +175,19 @@
     private void StartEdit(ProjectResponse project)
     {
         _editingId = project.Id;
+        _deleteConfirmId = null;
         _editErrors = [];
         _actionError = null;
         _editForm.Name = project.Name;
         _editForm.Description = project.Description;
         _editForm.StartDate = project.StartDate;
         _editForm.TargetDate = project.TargetDate;
+    }
+
+    private void AskDelete(Guid id)
+    {
+        _editingId = null;
+        _deleteConfirmId = id;
     }
 
     private void CancelEdit() => _editingId = null;
@@ -245,12 +232,5 @@
         await Load();
     }
 
-    private static string StatusLabel(ProjectStatus status) => status switch
-    {
-        ProjectStatus.Open => "Offen",
-        ProjectStatus.InProgress => "In Arbeit",
-        ProjectStatus.Done => "Erledigt",
-        ProjectStatus.Discarded => "Verworfen",
-        _ => status.ToString(),
-    };
+    private static string StatusLabel(ProjectStatus status) => ApiCall.StatusLabel(status.ToString());
 }

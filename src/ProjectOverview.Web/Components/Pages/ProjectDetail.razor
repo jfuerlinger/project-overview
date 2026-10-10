@@ -1,0 +1,269 @@
+@page "/projects/{ProjectId:guid}"
+@rendermode InteractiveServer
+@using ProjectOverview.Client
+@inject ProjectOverviewClient Api
+
+<PageTitle>@(_project?.Name ?? "Projekt")</PageTitle>
+
+<p><a href="">← Alle Projekte</a></p>
+
+@if (_loadError is not null)
+{
+    <div class="alert alert-danger" role="alert">@_loadError</div>
+}
+
+@if (_project is not null)
+{
+    <h1>@_project.Name</h1>
+    @if (!string.IsNullOrWhiteSpace(_project.Description))
+    {
+        <p class="text-muted">@_project.Description</p>
+    }
+}
+
+@if (_actionError is not null)
+{
+    <div class="alert alert-danger" role="alert">@_actionError</div>
+}
+
+@if (_project is not null)
+{
+    <section class="mb-4">
+        <h2 class="h4">Arbeitspaket anlegen</h2>
+        <EditForm Model="_createForm" OnSubmit="Create" FormName="create-work-package">
+            <WorkPackageFields Form="_createForm" IdPrefix="create" />
+            <ErrorList Errors="_createErrors" />
+            <button type="submit" class="btn btn-primary" disabled="@_saving">Anlegen</button>
+        </EditForm>
+    </section>
+
+    <section>
+        <h2 class="h4">Arbeitspakete</h2>
+        @if (_packages is null)
+        {
+            <p>Lade Arbeitspakete…</p>
+        }
+        else if (_packages.Count == 0)
+        {
+            <p>Noch keine Arbeitspakete.</p>
+        }
+        else
+        {
+            <table class="table align-middle">
+                <thead>
+                    <tr>
+                        <th>Titel</th>
+                        <th>Status</th>
+                        <th>Dauer</th>
+                        <th>Start</th>
+                        <th>Ende</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var package in _packages)
+                    {
+                        @if (_editingId == package.Id)
+                        {
+                            <tr>
+                                <td colspan="6">
+                                    <EditForm Model="_editForm" OnSubmit="() => SaveEdit(package.Id)" FormName="@($"edit-{package.Id}")">
+                                        <WorkPackageFields Form="_editForm" IdPrefix="@($"edit-{package.Id}")" />
+                                        <ErrorList Errors="_editErrors" />
+                                        <button type="submit" class="btn btn-primary btn-sm" disabled="@_saving">Speichern</button>
+                                        <button type="button" class="btn btn-secondary btn-sm" @onclick="() => _editingId = null">Abbrechen</button>
+                                    </EditForm>
+                                </td>
+                            </tr>
+                        }
+                        else
+                        {
+                            <tr>
+                                <td>
+                                    @package.Title
+                                    @if (!string.IsNullOrWhiteSpace(package.Description))
+                                    {
+                                        <div class="text-muted small">@package.Description</div>
+                                    }
+                                </td>
+                                <td>
+                                    <select @key="@($"{package.Id}-{_statusRefresh}")" class="form-select form-select-sm"
+                                            aria-label="Status von @package.Title" disabled="@_saving"
+                                            value="@package.Status" @onchange="e => SetStatus(package.Id, e.Value?.ToString())">
+                                        @foreach (var status in Enum.GetValues<WorkPackageStatus>())
+                                        {
+                                            <option value="@status">@ApiCall.StatusLabel(status.ToString())</option>
+                                        }
+                                    </select>
+                                </td>
+                                <td>@(package.DurationDays is { } days ? $"{days} d" : "–")</td>
+                                <td>@(package.StartDate?.ToString("yyyy-MM-dd") ?? "–")</td>
+                                <td>@(package.EndDate?.ToString("yyyy-MM-dd") ?? "–")</td>
+                                <td class="text-end text-nowrap">
+                                    @if (_deleteConfirmId == package.Id)
+                                    {
+                                        <span class="me-2">Wirklich löschen?</span>
+                                        <button type="button" class="btn btn-danger btn-sm" @onclick="() => Delete(package.Id)">Ja, löschen</button>
+                                        <button type="button" class="btn btn-secondary btn-sm" @onclick="() => _deleteConfirmId = null">Abbrechen</button>
+                                    }
+                                    else
+                                    {
+                                        <button type="button" class="btn btn-outline-primary btn-sm" @onclick="() => StartEdit(package)">Bearbeiten</button>
+                                        <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => AskDelete(package.Id)">Löschen</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private readonly WorkPackageForm _createForm = new();
+    private readonly WorkPackageForm _editForm = new();
+    private ProjectResponse? _project;
+    private List<WorkPackageResponse>? _packages;
+    private List<string> _createErrors = [];
+    private List<string> _editErrors = [];
+    private string? _loadError;
+    private string? _actionError;
+    private Guid? _editingId;
+    private Guid? _deleteConfirmId;
+    private bool _saving;
+    private int _statusRefresh;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // The component instance is reused when navigating from one project to another.
+        _project = null;
+        _packages = null;
+        _editingId = null;
+        _deleteConfirmId = null;
+        _actionError = null;
+        _createErrors = [];
+        _editErrors = [];
+        await Load(loadProject: true);
+    }
+
+    private async Task Load(bool loadProject = false)
+    {
+        try
+        {
+            if (loadProject || _project is null) _project = await Api.GetProjectAsync(ProjectId);
+            _packages = (await Api.ListWorkPackagesAsync(ProjectId)).ToList();
+            _loadError = null;
+        }
+        catch (ApiException exception) when (exception.StatusCode == 404)
+        {
+            _project = null;
+            _loadError = "Das Projekt wurde nicht gefunden.";
+        }
+        catch (HttpRequestException)
+        {
+            _packages = null;
+            _loadError = "Die API ist nicht erreichbar.";
+        }
+        catch (ApiException)
+        {
+            _packages = null;
+            _loadError = "Die Arbeitspakete konnten nicht geladen werden.";
+        }
+    }
+
+    private async Task<List<string>> Call(Func<Task> call)
+    {
+        _saving = true;
+        try
+        {
+            return await ApiCall.Run(call);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task Create()
+    {
+        if (_saving) return;
+        _actionError = null;
+        _createErrors = await Call(() => Api.CreateWorkPackageAsync(ProjectId, new CreateWorkPackageRequest
+        {
+            Title = _createForm.Title,
+            Description = _createForm.Description,
+            DurationDays = _createForm.DurationDays,
+            StartDate = _createForm.StartDate,
+            EndDate = _createForm.EndDate,
+        }));
+
+        // Refreshing is separate from creating: a failed refresh must not look like a failed create.
+        if (_createErrors.Count > 0) return;
+        _createForm.Reset();
+        await Load();
+    }
+
+    private void StartEdit(WorkPackageResponse package)
+    {
+        _editingId = package.Id;
+        _deleteConfirmId = null;
+        _editErrors = [];
+        _actionError = null;
+        _editForm.Title = package.Title;
+        _editForm.Description = package.Description;
+        _editForm.DurationDays = package.DurationDays;
+        _editForm.StartDate = package.StartDate;
+        _editForm.EndDate = package.EndDate;
+    }
+
+    private void AskDelete(Guid id)
+    {
+        _editingId = null;
+        _deleteConfirmId = id;
+    }
+
+    private async Task SaveEdit(Guid id)
+    {
+        if (_saving) return;
+        _actionError = null;
+        _editErrors = await Call(() => Api.UpdateWorkPackageAsync(id, new UpdateWorkPackageRequest
+        {
+            Title = _editForm.Title,
+            Description = _editForm.Description,
+            DurationDays = _editForm.DurationDays,
+            StartDate = _editForm.StartDate,
+            EndDate = _editForm.EndDate,
+        }));
+
+        if (_editErrors.Count > 0) return;
+        _editingId = null;
+        await Load();
+    }
+
+    private async Task SetStatus(Guid id, string? value)
+    {
+        if (_saving) return;
+        _actionError = null;
+        if (!Enum.TryParse<WorkPackageStatus>(value, ignoreCase: true, out var status)) return;
+
+        var errors = await Call(() => Api.SetWorkPackageStatusAsync(id, new SetWorkPackageStatusRequest { Status = status }));
+        _actionError = errors.FirstOrDefault();
+        // The browser keeps the rejected choice in the <select>; a new key makes it show the server's value again.
+        if (_actionError is not null) _statusRefresh++;
+        await Load();
+    }
+
+    private async Task Delete(Guid id)
+    {
+        if (_saving) return;
+        _actionError = null;
+        _deleteConfirmId = null;
+        var errors = await Call(() => Api.DeleteWorkPackageAsync(id));
+        _actionError = errors.FirstOrDefault();
+        await Load();
+    }
+}

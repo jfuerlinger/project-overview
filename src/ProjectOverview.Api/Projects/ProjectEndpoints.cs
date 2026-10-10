@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
 
@@ -16,13 +15,6 @@ public sealed record CreateProjectRequest(string? Name, string? Description, Dat
 public sealed record UpdateProjectRequest(string? Name, string? Description, DateOnly? StartDate, DateOnly? TargetDate);
 
 public sealed record SetProjectStatusRequest(ProjectStatus? Status);
-
-public static class ProjectStatusNames
-{
-    /// <summary>The wire names of all statuses (camelCase), in declaration order.</summary>
-    public static readonly string[] All =
-        Enum.GetNames<ProjectStatus>().Select(name => JsonNamingPolicy.CamelCase.ConvertName(name)).ToArray();
-}
 
 public sealed record ProjectResponse(
     Guid Id,
@@ -104,7 +96,7 @@ public static class ProjectEndpoints
         // Undefined values never get here: the JSON converter rejects them while binding the body.
         if (request.Status is not { } status)
             return new ValidationErrors()
-                .Add("status", "required", $"Status is required (one of: {string.Join(", ", ProjectStatusNames.All)}).")
+                .Add("status", "required", $"Status is required (one of: {string.Join(", ", EnumNames.CamelCase<ProjectStatus>())}).")
                 .ToProblem();
 
         project.SetStatus(status);

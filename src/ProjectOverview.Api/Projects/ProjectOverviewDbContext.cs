@@ -1,11 +1,13 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
+using ProjectOverview.Api.WorkPackages;
 
 namespace ProjectOverview.Api.Projects;
 
 public sealed class ProjectOverviewDbContext(DbContextOptions<ProjectOverviewDbContext> options) : DbContext(options)
 {
     public DbSet<Project> Projects => Set<Project>();
+    public DbSet<WorkPackage> WorkPackages => Set<WorkPackage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -20,6 +22,20 @@ public sealed class ProjectOverviewDbContext(DbContextOptions<ProjectOverviewDbC
                 value => value.UtcTicks,
                 ticks => new DateTimeOffset(ticks, TimeSpan.Zero));
             project.HasIndex(p => p.CreatedAt);
+        });
+
+        modelBuilder.Entity<WorkPackage>(package =>
+        {
+            package.HasKey(p => p.Id);
+            package.Property(p => p.Title).IsRequired().HasMaxLength(WorkPackageLimits.TitleMaxLength);
+            package.Property(p => p.Description).HasMaxLength(WorkPackageLimits.DescriptionMaxLength);
+            package.Property(p => p.Status).HasConversion<string>();
+            package.Property(p => p.CreatedAt).HasConversion(
+                value => value.UtcTicks,
+                ticks => new DateTimeOffset(ticks, TimeSpan.Zero));
+            // A work package belongs to exactly one project and goes away with it.
+            package.HasOne<Project>().WithMany().HasForeignKey(p => p.ProjectId).OnDelete(DeleteBehavior.Cascade);
+            package.HasIndex(p => new { p.ProjectId, p.CreatedAt });
         });
     }
 }
