@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
+using ProjectOverview.Api.Milestones;
 using ProjectOverview.Api.WorkPackages;
 
 namespace ProjectOverview.Api.Projects;
@@ -8,6 +9,7 @@ public sealed class ProjectOverviewDbContext(DbContextOptions<ProjectOverviewDbC
 {
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<WorkPackage> WorkPackages => Set<WorkPackage>();
+    public DbSet<Milestone> Milestones => Set<Milestone>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -39,6 +41,20 @@ public sealed class ProjectOverviewDbContext(DbContextOptions<ProjectOverviewDbC
             // Sub work packages go away with their parent.
             package.HasOne<WorkPackage>().WithMany().HasForeignKey(p => p.ParentId).OnDelete(DeleteBehavior.Cascade);
             package.HasIndex(p => p.ParentId);
+            // Deleting a milestone only removes the assignment.
+            package.HasOne<Milestone>().WithMany().HasForeignKey(p => p.MilestoneId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<Milestone>(milestone =>
+        {
+            milestone.HasKey(m => m.Id);
+            milestone.Property(m => m.Title).IsRequired().HasMaxLength(MilestoneLimits.TitleMaxLength);
+            milestone.Property(m => m.Description).HasMaxLength(MilestoneLimits.DescriptionMaxLength);
+            milestone.Property(m => m.CreatedAt).HasConversion(
+                value => value.UtcTicks,
+                ticks => new DateTimeOffset(ticks, TimeSpan.Zero));
+            milestone.HasOne<Project>().WithMany().HasForeignKey(m => m.ProjectId).OnDelete(DeleteBehavior.Cascade);
+            milestone.HasIndex(m => new { m.ProjectId, m.TargetDate });
         });
     }
 }

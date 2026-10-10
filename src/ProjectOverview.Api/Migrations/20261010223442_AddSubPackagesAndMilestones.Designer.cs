@@ -11,14 +11,45 @@ using ProjectOverview.Api.Projects;
 namespace ProjectOverview.Api.Migrations
 {
     [DbContext(typeof(ProjectOverviewDbContext))]
-    [Migration("20261010223003_AddWorkPackageHierarchy")]
-    partial class AddWorkPackageHierarchy
+    [Migration("20261010223442_AddSubPackagesAndMilestones")]
+    partial class AddSubPackagesAndMilestones
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.12");
+
+            modelBuilder.Entity("ProjectOverview.Api.Milestones.Milestone", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateOnly>("TargetDate")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "TargetDate");
+
+                    b.ToTable("Milestones");
+                });
 
             modelBuilder.Entity("ProjectOverview.Api.Projects.Project", b =>
                 {
@@ -74,6 +105,9 @@ namespace ProjectOverview.Api.Migrations
                     b.Property<DateOnly?>("EndDate")
                         .HasColumnType("TEXT");
 
+                    b.Property<Guid?>("MilestoneId")
+                        .HasColumnType("TEXT");
+
                     b.Property<Guid?>("ParentId")
                         .HasColumnType("TEXT");
 
@@ -94,6 +128,8 @@ namespace ProjectOverview.Api.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("MilestoneId");
+
                     b.HasIndex("ParentId");
 
                     b.HasIndex("ProjectId", "CreatedAt");
@@ -101,8 +137,22 @@ namespace ProjectOverview.Api.Migrations
                     b.ToTable("WorkPackages");
                 });
 
+            modelBuilder.Entity("ProjectOverview.Api.Milestones.Milestone", b =>
+                {
+                    b.HasOne("ProjectOverview.Api.Projects.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("ProjectOverview.Api.WorkPackages.WorkPackage", b =>
                 {
+                    b.HasOne("ProjectOverview.Api.Milestones.Milestone", null)
+                        .WithMany()
+                        .HasForeignKey("MilestoneId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("ProjectOverview.Api.WorkPackages.WorkPackage", null)
                         .WithMany()
                         .HasForeignKey("ParentId")

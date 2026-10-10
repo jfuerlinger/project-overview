@@ -28,6 +28,9 @@
 
 @if (_project is not null)
 {
+    <MilestoneSection ProjectId="ProjectId" Packages="_packages"
+                      MilestonesChanged="OnMilestonesChanged" MilestoneDeleted="OnMilestoneDeleted" />
+
     <section class="mb-4">
         <h2 class="h4">Arbeitspaket anlegen</h2>
         <EditForm Model="_createForm" OnSubmit="Create" FormName="create-work-package">
@@ -54,6 +57,7 @@
                     <tr>
                         <th>Titel</th>
                         <th>Status</th>
+                        <th>Meilenstein</th>
                         <th>Dauer</th>
                         <th>Start</th>
                         <th>Ende</th>
@@ -66,7 +70,7 @@
                         @if (_editingId == package.Id)
                         {
                             <tr>
-                                <td colspan="6">
+                                <td colspan="7">
                                     <EditForm Model="_editForm" OnSubmit="() => SaveEdit(package.Id)" FormName="@($"edit-{package.Id}")">
                                         <WorkPackageFields Form="_editForm" IdPrefix="@($"edit-{package.Id}")" ParentOptions="ParentChoices(excluding: package.Id)" />
                                         <ErrorList Errors="_editErrors" />
@@ -100,6 +104,22 @@
                                         }
                                     </select>
                                 </td>
+                                <td>
+                                    <select @key="@($"{package.Id}-ms-{_statusRefresh}-{package.MilestoneId}")" class="form-select form-select-sm"
+                                            aria-label="Meilenstein von @package.Title" disabled="@_saving"
+                                            value="@(package.MilestoneId?.ToString() ?? "")"
+                                            @onchange="e => SetMilestone(package.Id, e.Value?.ToString())">
+                                        <option value="">–</option>
+                                        @if (package.MilestoneId is { } assigned && _milestones.All(m => m.Id != assigned))
+                                        {
+                                            <option value="@assigned">(Meilenstein nicht geladen)</option>
+                                        }
+                                        @foreach (var milestone in _milestones)
+                                        {
+                                            <option value="@milestone.Id">◆ @milestone.Title</option>
+                                        }
+                                    </select>
+                                </td>
                                 <td>@(package.DurationDays is { } days ? $"{days} d" : "–")</td>
                                 <td>@(package.StartDate?.ToString("yyyy-MM-dd") ?? "–")</td>
                                 <td>@(package.EndDate?.ToString("yyyy-MM-dd") ?? "–")</td>
@@ -130,6 +150,7 @@
 
     private readonly WorkPackageForm _createForm = new();
     private readonly WorkPackageForm _editForm = new();
+    private IReadOnlyList<MilestoneResponse> _milestones = [];
     private ProjectResponse? _project;
     private List<WorkPackageResponse>? _packages;
     private List<string> _createErrors = [];
@@ -147,6 +168,7 @@
         // The component instance is reused when navigating from one project to another.
         _project = null;
         _packages = null;
+        _milestones = [];
         _editingId = null;
         _deleteConfirmId = null;
         _actionError = null;
@@ -313,6 +335,25 @@
         if (!Enum.TryParse<WorkPackageStatus>(value, ignoreCase: true, out var status)) return;
 
         var errors = await Call(() => Api.SetWorkPackageStatusAsync(id, new SetWorkPackageStatusRequest { Status = status }));
+        _actionError = errors.FirstOrDefault();
+        // The browser keeps the rejected choice in the <select>; a new key makes it show the server's value again.
+        if (_actionError is not null) _statusRefresh++;
+        await Load();
+    }
+
+    private void OnMilestonesChanged(IReadOnlyList<MilestoneResponse> milestones) => _milestones = milestones;
+
+    /// <summary>Deleting a milestone unassigns its packages on the server, so reload them.</summary>
+    private async Task OnMilestoneDeleted() => await Load();
+
+    private async Task SetMilestone(Guid packageId, string? value)
+    {
+        if (_saving) return;
+        _actionError = null;
+        Guid? milestoneId = Guid.TryParse(value, out var parsed) ? parsed : null;
+
+        var errors = await Call(() => Api.SetWorkPackageMilestoneAsync(
+            packageId, new SetWorkPackageMilestoneRequest { MilestoneId = milestoneId }));
         _actionError = errors.FirstOrDefault();
         // The browser keeps the rejected choice in the <select>; a new key makes it show the server's value again.
         if (_actionError is not null) _statusRefresh++;

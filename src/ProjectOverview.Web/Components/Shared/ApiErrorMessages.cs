@@ -21,6 +21,7 @@ public static class ApiErrorMessages
         ["status"] = "Der Status",
         ["title"] = "Der Titel",
         ["durationDays"] = "Die Dauer",
+        ["milestoneId"] = "Der Meilenstein",
     };
 
     public static List<string> From(ValidationProblem? problem)

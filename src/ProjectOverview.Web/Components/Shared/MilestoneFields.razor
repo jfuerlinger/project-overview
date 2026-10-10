@@ -1,0 +1,17 @@
+<div class="mb-2">
+    <label class="form-label" for="@($"{IdPrefix}-title")">Titel</label>
+    <InputText id="@($"{IdPrefix}-title")" class="form-control" @bind-Value="Form.Title" />
+</div>
+<div class="mb-2">
+    <label class="form-label" for="@($"{IdPrefix}-description")">Beschreibung</label>
+    <InputTextArea id="@($"{IdPrefix}-description")" class="form-control" @bind-Value="Form.Description" />
+</div>
+<div class="mb-2">
+    <label class="form-label" for="@($"{IdPrefix}-target")">Zieldatum</label>
+    <InputDate id="@($"{IdPrefix}-target")" class="form-control" @bind-Value="Form.TargetDate" />
+</div>
+
+@code {
+    [Parameter, EditorRequired] public MilestoneForm Form { get; set; } = default!;
+    [Parameter, EditorRequired] public string IdPrefix { get; set; } = "";
+}

@@ -22,6 +22,7 @@ public sealed class WorkPackage
     public DateOnly? StartDate { get; private set; }
     public DateOnly? EndDate { get; private set; }
     public WorkPackageStatus Status { get; private set; }
+    public Guid? MilestoneId { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
 
     private WorkPackage() { }
@@ -54,4 +55,6 @@ public sealed class WorkPackage
     public void SetStatus(WorkPackageStatus status) => Status = status;
 
     public void MoveTo(Guid? parentId) => ParentId = parentId;
+
+    public void SetMilestone(Guid? milestoneId) => MilestoneId = milestoneId;
 }

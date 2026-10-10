@@ -41,11 +41,13 @@ public sealed record WorkPackageResponse(
     DateOnly? StartDate,
     DateOnly? EndDate,
     WorkPackageStatus Status,
-    bool IsDerived)
+    bool IsDerived,
+    Guid? MilestoneId)
 {
     public static WorkPackageResponse From(WorkPackage package, EffectiveWorkPackage effective) => new(
         package.Id, package.ProjectId, package.ParentId, package.Title, package.Description,
-        package.DurationDays, effective.StartDate, effective.EndDate, effective.Status, effective.IsDerived);
+        package.DurationDays, effective.StartDate, effective.EndDate, effective.Status, effective.IsDerived,
+        package.MilestoneId);
 }
 
 public static class WorkPackageEndpoints
@@ -212,7 +214,7 @@ public static class WorkPackageEndpoints
     private static Task<bool> HasChildren(ProjectOverviewDbContext db, Guid id, CancellationToken ct) =>
         db.WorkPackages.AnyAsync(p => p.ParentId == id, ct);
 
-    private static async Task<WorkPackageResponse> ToResponse(
+    internal static async Task<WorkPackageResponse> ToResponse(
         ProjectOverviewDbContext db, WorkPackage package, CancellationToken ct)
     {
         var effective = WorkPackageHierarchy.Resolve(await LoadProjectPackages(db, package.ProjectId, ct));
